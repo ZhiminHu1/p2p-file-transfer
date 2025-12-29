@@ -62,14 +62,8 @@ func (c *CentralServer) loop() {
 	for {
 		select {
 		case msg := <-c.Transport.Consume():
-			// var dataMsg pkg.DataMessage
-			dataMsg := new(pkg.DataMessage)
-			// log.Println(msg.Payload)
-
-			decoder := gob.NewDecoder(bytes.NewReader(msg.Payload))
-			err := decoder.Decode(&dataMsg)
-			if err != nil {
-				log.Println("Decode Error", err.Error())
+			dataMsg := &pkg.DataMessage{
+				Payload: msg.Payload,
 			}
 			if err := c.handleMessage(msg.From, dataMsg); err != nil {
 				log.Println("handle message error:", err)

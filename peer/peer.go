@@ -69,12 +69,8 @@ func (p *PeerServer) loop() {
 	for {
 		select {
 		case msg := <-p.Transport.Consume():
-			dataMsg := new(pkg.DataMessage)
-			buf := bytes.NewReader(msg.Payload)
-			decoder := gob.NewDecoder(buf)
-			if err := decoder.Decode(dataMsg); err != nil {
-				log.Printf("[PeerServer] Failed to decode data: %v", err)
-				continue
+			dataMsg := &pkg.DataMessage{
+				Payload: msg.Payload,
 			}
 
 			if err := p.handleMessage(msg.From, dataMsg); err != nil {

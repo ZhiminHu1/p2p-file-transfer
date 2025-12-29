@@ -9,5 +9,5 @@ type msg struct {
 	From     string
 	FromAddr string
 	Stream   bool
-	Payload  []byte
+	Payload  any
 }
