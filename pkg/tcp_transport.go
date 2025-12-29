@@ -19,8 +19,8 @@ we can perform some actions like adding the peer to the ppeer map usin t.Onpeer 
 type TCPPeer struct {
 	net.Conn
 
-	// if we dial and retrieve a conn => outbound == true
-	// if we accept and retrieve a conn => outbound == false
+	// if we dial and retrieve a conn => outbound == true 代表主动连接
+	// if we accept and retrieve a conn => outbound == false 代表被动连接
 
 	outbound bool
 

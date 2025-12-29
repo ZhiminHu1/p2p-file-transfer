@@ -31,7 +31,7 @@ func main() {
 	}()
 
 	time.Sleep(1 * time.Second)
-	err := p.RegisterFile("/mnt/d/Devlopement/p2p-file-transfer/TestingFiles/test_image.tif")
+	err := p.RegisterFile("C:\\Users\\13237\\Desktop\\githubproject\\p2p-file-transfer\\TestingFiles\\test_image.tif")
 	// err := p.RegisterFile("D:\\Devlopement\\go-network-Stream\\TestingFiles\\test_image.tif")
 	if err != nil {
 		log.Println("Error Register peer", err)

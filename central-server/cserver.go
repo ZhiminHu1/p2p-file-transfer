@@ -20,10 +20,10 @@ func init() {
 
 type CentralServer struct {
 	mu        sync.Mutex
-	peers     map[string]pkg.Peer //conn
+	peers     map[string]pkg.Peer //conn  Ip -> Peer
 	Transport pkg.Transport
 	files     map[string]*pkg.FileMetaData //fileId-->fileMetadata
-	quitch    chan struct{}
+	quitCh    chan struct{}
 }
 
 func NewCentralServer(opts pkg.TransportOpts) *CentralServer {
@@ -33,7 +33,7 @@ func NewCentralServer(opts pkg.TransportOpts) *CentralServer {
 		peers:     make(map[string]pkg.Peer),
 		Transport: transport,
 		files:     make(map[string]*pkg.FileMetaData),
-		quitch:    make(chan struct{}),
+		quitCh:    make(chan struct{}),
 	}
 	transport.OnPeer = centralServer.OnPeer
 
@@ -74,7 +74,7 @@ func (c *CentralServer) loop() {
 			if err := c.handleMessage(msg.From, dataMsg); err != nil {
 				log.Println("handle message error:", err)
 			}
-		case <-c.quitch:
+		case <-c.quitCh:
 			return
 		}
 	}
@@ -87,7 +87,6 @@ func (c *CentralServer) handleMessage(from string, dataMsg *pkg.DataMessage) err
 	case pkg.FileMetaData:
 		return c.handleRegisterFile(from, v)
 	case pkg.RequestChunkData:
-
 		return c.handleRequestChunkData(from, v)
 
 	case pkg.RegisterSeeder:
@@ -192,6 +191,7 @@ func (c *CentralServer) handleRegisterFile(from string, msg pkg.FileMetaData) er
 	return nil
 }
 
+// OnPeer 由本层实现，决定如何处理新 peer（如加入 map、初始化状态等）
 func (c *CentralServer) OnPeer(peer pkg.Peer, connType string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()

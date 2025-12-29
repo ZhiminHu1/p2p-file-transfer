@@ -29,10 +29,15 @@ type PeerServer struct {
 }
 
 func init() {
+	// 文件相关
 	gob.Register(pkg.FileMetaData{})
+	//
 	gob.Register(pkg.ChunkMetadata{})
+	// peer间文件请求相关
 	gob.Register(pkg.RequestChunkData{})
+	//
 	gob.Register(pkg.ChunkRequestToPeer{})
+	// 用于注册peer 的结构体
 	gob.Register(pkg.RegisterSeeder{})
 }
 
@@ -93,7 +98,7 @@ func (p *PeerServer) handleMessage(from string, dataMsg *pkg.DataMessage) error 
 }
 
 func (p *PeerServer) SendChunkData(from string, v pkg.ChunkRequestToPeer) error {
-	filePath := fmt.Sprintf("/mnt/d/Devlopement/p2p-file-transfer/chunks-%s/%s/%s", p.peerServAddr, v.FileId, v.ChunkName)
+	filePath := fmt.Sprintf("C:\\Users\\13237\\Desktop\\githubproject\\p2p-file-transfer\\cmd\\peer/chunks-%s/%s/%s", strings.Split(p.peerServAddr, ":")[0], v.FileId, v.ChunkName)
 	log.Printf("[PeerServer] Sending chunk %d of file %s to %s", v.ChunkId, v.FileId, from)
 
 	file, err := os.Open(filePath)
@@ -194,8 +199,9 @@ func (p *PeerServer) RegisterFile(path string) error {
 		return fmt.Errorf("failed to hash file: %w", err)
 	}
 
-	dir := fmt.Sprintf("chunks-%s", p.peerServAddr)
-	fileDirectory, err := p.store.createChunkDirectory(dir, hashString)
+	vaildDir := fmt.Sprintf("chunks-%s", strings.Split(p.peerServAddr, ":")[0])
+	//dir := fmt.Sprintf("chunks-%s", p.peerServAddr)
+	fileDirectory, err := p.store.createChunkDirectory(vaildDir, hashString)
 	if err != nil {
 		return fmt.Errorf("failed to create chunk directory: %w", err)
 	}
@@ -244,7 +250,7 @@ func (p *PeerServer) registerAsSeeder(fileId string) error {
 	if !exists || !isComplete {
 		return fmt.Errorf("file %s is not completely downloaded", fileId)
 	}
-
+	// 将自己的文件ID，以及本地址IP，打包发送给centralServer
 	registerMsg := pkg.DataMessage{
 		Payload: pkg.RegisterSeeder{
 			FileId:   fileId,

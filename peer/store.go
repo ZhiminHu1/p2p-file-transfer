@@ -15,7 +15,7 @@ type Store struct {
 }
 
 func (s *Store) ReassembleFile(fileId string, fileName string, fileExtension string, peerAddr string) error {
-	dir := fmt.Sprintf("chunks-%s", peerAddr)
+	dir := fmt.Sprintf("chunks-%s", strings.Split(peerAddr, ":")[0])
 	chunkDir := filepath.Join(dir, fileId)
 	outputPath := filepath.Join(chunkDir, fmt.Sprintf("%s.%s", fileName, fileExtension))
 

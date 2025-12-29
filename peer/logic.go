@@ -10,6 +10,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"tarun-kavipurapu/p2p-transfer/pkg"
 )
@@ -34,6 +35,7 @@ func (cj *ChunkJob) Execute() error {
 
 func (p *PeerServer) handleChunks(fileMetaData pkg.FileMetaData) error {
 	numOfChunks := uint32(len(fileMetaData.ChunkInfo))
+	//
 	chunkPeerAssign := assignChunks(fileMetaData)
 
 	log.Printf("[PeerServer] Starting download of file %s (%s) with %d chunks", fileMetaData.FileName, fileMetaData.FileId, numOfChunks)
@@ -157,7 +159,7 @@ func (p *PeerServer) fileRequest(fileId string, chunkIndex uint32, peerAddr stri
 		return fmt.Errorf("failed to read file size from peer %s: %w", peerAddr, err)
 	}
 
-	baseDir := fmt.Sprintf("chunks-%s", p.peerServAddr)
+	baseDir := fmt.Sprintf("chunks-%s", strings.Split(p.peerServAddr, ":")[0])
 	folderDirectory, err := p.store.createChunkDirectory(baseDir, fileId)
 	if err != nil {
 		return fmt.Errorf("failed to create chunk directory: %w", err)

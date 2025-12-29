@@ -12,7 +12,7 @@ type PeerMetadata struct {
 type ChunkMetadata struct {
 	ChunkHash      string
 	ChunkIndex     uint32
-	PeersWithChunk []string //here peers adress should be server adress of the peer
+	PeersWithChunk []string // 存储拥有该chunk的 peers 地址
 }
 type FileMetaData struct {
 	FileId        string //this is nothing but file hash

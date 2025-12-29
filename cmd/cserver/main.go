@@ -21,7 +21,7 @@ func main() {
 	err := server.Start()
 
 	if err != nil {
-		log.Println("Error Starting sserver ", err)
+		log.Println("Error Starting cserver ", err)
 	}
 
 }
