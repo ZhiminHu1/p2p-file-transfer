@@ -11,7 +11,7 @@ type Decoder interface {
 
 type GOBDecoder struct{}
 
-func (dec GOBDecoder) Decode(r io.Reader, msg *msg) error {
+func (dec GOBDecoder) Reader(r io.Reader, msg *msg) error {
 	return gob.NewDecoder(r).Decode(msg)
 }
 
@@ -19,7 +19,6 @@ type DefaultDecoder struct {
 }
 
 func (dec DefaultDecoder) Reader(r io.Reader, msg *msg) error {
-
 	buf := make([]byte, 2048)
 	n, err := r.Read(buf)
 	if err != nil {

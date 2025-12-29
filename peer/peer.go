@@ -169,7 +169,7 @@ func (p *PeerServer) RegisterPeer() error {
 
 	time.Sleep(1 * time.Second)
 	p.peerLock.Lock()
-	err = p.centralServerPeer.Send([]byte{pkg.IncomingMessage})
+	//err = p.centralServerPeer.Send([]byte{pkg.IncomingMessage})
 	p.peerLock.Unlock()
 
 	if err != nil {

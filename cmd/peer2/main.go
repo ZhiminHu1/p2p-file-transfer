@@ -14,7 +14,7 @@ func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	opts := pkg.TransportOpts{
 		ListenAddr: "127.0.0.1:8003",
-		Decoder:    pkg.DefaultDecoder{},
+		Decoder:    pkg.GOBDecoder{},
 	}
 	p := peer.NewPeerServer(opts, "127.0.0.1:8000")
 	go func() {

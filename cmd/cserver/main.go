@@ -14,7 +14,7 @@ func main() {
 
 	opts := pkg.TransportOpts{
 		ListenAddr: "127.0.0.1:8000",
-		Decoder:    pkg.DefaultDecoder{},
+		Decoder:    pkg.GOBDecoder{},
 	}
 	server := centralserver.NewCentralServer(opts)
 
