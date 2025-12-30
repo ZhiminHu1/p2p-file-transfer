@@ -15,12 +15,15 @@ type TCPNode struct {
 	conn net.Conn
 	enc  *gob.Encoder
 	lock sync.Mutex
+	// TCP主动连接 outbound -> true 否则 outbound -> false
+	outbound bool
 }
 
-func NewTCPNode(conn net.Conn) *TCPNode {
+func NewTCPNode(conn net.Conn, outbound bool) *TCPNode {
 	return &TCPNode{
-		conn: conn,
-		enc:  gob.NewEncoder(conn),
+		conn:     conn,
+		enc:      gob.NewEncoder(conn),
+		outbound: outbound,
 	}
 }
 
@@ -92,15 +95,15 @@ func (t *TCPTransport) acceptLoop() {
 				continue
 			}
 		}
-		node := NewTCPNode(conn)
-		go t.handleConn(conn, node)
+		node := NewTCPNode(conn, false)
+		go t.handleConn(conn, node, node.outbound)
 	}
 }
 
-func (t *TCPTransport) handleConn(conn net.Conn, node transport.Node) {
+func (t *TCPTransport) handleConn(conn net.Conn, node transport.Node, outbound bool) {
 	defer conn.Close()
 
-	if t.onPeer != nil {
+	if !outbound && t.onPeer != nil {
 		if err := t.onPeer(node); err != nil {
 			return
 		}
@@ -116,6 +119,7 @@ func (t *TCPTransport) handleConn(conn net.Conn, node transport.Node) {
 			}
 			return
 		}
+		log.Printf("TCP read message from %s, ountbound %t", conn.RemoteAddr(), outbound)
 
 		t.rpcCh <- protocol.RPC{
 			From:    conn.RemoteAddr().String(),
@@ -130,8 +134,8 @@ func (t *TCPTransport) Dial(addr string) (transport.Node, error) {
 		return nil, err
 	}
 
-	node := NewTCPNode(conn)
-	go t.handleConn(conn, node)
+	node := NewTCPNode(conn, true)
+	go t.handleConn(conn, node, node.outbound)
 
 	return node, nil
 }

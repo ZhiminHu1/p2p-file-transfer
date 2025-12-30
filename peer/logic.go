@@ -113,7 +113,7 @@ func (p *PeerServer) handleChunks(fileMetaData protocol.FileMetaData) error {
 			tracker.CompleteChunk(chunkJob.ChunkIndex)
 		}
 	}
-
+	// 等待所有chunk下载完成
 	<-workerPool.Done()
 
 	if successfulChunks != int(numOfChunks) {
@@ -169,17 +169,25 @@ func (p *PeerServer) fileRequest(fileId string, chunkIndex uint32, peerAddr stri
 	p.peerLock.Lock()
 	node, exist := p.peers[peerAddr]
 	p.peerLock.Unlock()
+
 	if !exist {
+		log.Printf("connect peer addr : %s", peerAddr)
 		// Connect connection
-		var err error
-		node, err = p.Transport.Dial(peerAddr)
+		newNode, err := p.Transport.Dial(peerAddr)
 		if err != nil {
 			return fmt.Errorf("failed to dial peer %s: %w", peerAddr, err)
 		}
-		// todo 没有调用回调函数，
-		// 目前方案 ，主动建立连接，不需要执行回调函数
+
 		p.peerLock.Lock()
-		p.peers[peerAddr] = node
+		// Double check if connection was established while we were dialing
+		// 保证对同一个peer 只会有一条TCP连接
+		if existingNode, ok := p.peers[peerAddr]; ok {
+			newNode.Close()
+			node = existingNode
+		} else {
+			p.peers[peerAddr] = newNode
+			node = newNode
+		}
 		p.peerLock.Unlock()
 	}
 
@@ -197,6 +205,7 @@ func (p *PeerServer) fileRequest(fileId string, chunkIndex uint32, peerAddr stri
 
 	// 4. Wait for response
 	select {
+
 	case resp := <-respCh:
 		// Process response
 		return p.saveChunk(fileId, chunkIndex, resp.Data, chunkHash, tracker)

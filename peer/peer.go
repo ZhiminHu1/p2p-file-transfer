@@ -74,7 +74,14 @@ func (p *PeerServer) handleMessage(from string, msg protocol.RPC) error {
 	switch v := msg.Payload.(type) {
 	case protocol.FileMetaData:
 		log.Printf("[PeerServer] Received FileMetaData for file: %s", v.FileName)
-		return p.handleRequestChunks(from, v)
+		// Handle chunks in a separate goroutine to avoid blocking the message loop
+		go func() {
+			if err := p.handleRequestChunks(from, v); err != nil {
+				log.Printf("[PeerServer] Error handling request chunks: %v", err)
+			}
+		}()
+		return nil
+
 	case protocol.ChunkRequestToPeer:
 		log.Printf("[PeerServer] Received ChunkRequestToPeer for file: %s, chunk: %d", v.FileId, v.ChunkId)
 		return p.SendChunkData(from, v)
