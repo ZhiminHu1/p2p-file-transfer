@@ -176,10 +176,10 @@ func (p *PeerServer) OnPeer(peer transport.Node) error {
 	// NOTE: This might be fragile if address string format differs slightly
 	if peer.Addr() == p.cServerAddr {
 		p.centralServerPeer = peer
-		logger.Sugar.Infof("[PeerServer] Connected to central server: %s", peer.Addr())
+		logger.Sugar.Infof("[PeerServer] Connected to central server: %s --> %s", peer.Addr(), p.cServerAddr)
 	} else {
 		p.peers[peer.Addr()] = peer
-		logger.Sugar.Infof("[PeerServer] New peer connected: %s", peer.Addr())
+		logger.Sugar.Infof("[PeerServer] New peer connected: %s --> %s", peer.Addr(), p.peerServAddr)
 	}
 
 	return nil

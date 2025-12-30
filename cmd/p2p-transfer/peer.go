@@ -49,9 +49,6 @@ var peerCmd = &cobra.Command{
 				logger.Sugar.Errorf("Failed to request download: %v", err)
 			}
 		}
-
-		// Block forever
-		select {}
 	},
 }
 
