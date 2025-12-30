@@ -36,7 +36,7 @@ func NewCentralServer(optsStr string) *CentralServer {
 }
 
 func (c *CentralServer) Start() error {
-	logger.Sugar.Infof("[PeerServer] [%s] starting CentralServer...", c.Transport.Addr())
+	logger.Sugar.Infof("[CentralServer] [%s] starting CentralServer...", c.Transport.Addr())
 
 	err := c.Transport.ListenAndAccept()
 	if err != nil {
@@ -49,7 +49,7 @@ func (c *CentralServer) Start() error {
 func (c *CentralServer) loop() {
 
 	defer func() {
-		logger.Sugar.Info("[PeerServer] Central Serevr has stopped due to error or quit acction")
+		logger.Sugar.Info("[CentralServer] Central Serevr has stopped due to error or quit acction")
 
 		c.Transport.Close()
 	}()
@@ -77,11 +77,11 @@ func (c *CentralServer) handleMessage(from string, msg protocol.RPC) error {
 		return c.registerSeeder(v)
 
 	case protocol.DataMessage:
-		logger.Sugar.Warn("[PeerServer] Received DataMessage wrapper, this shouldn't happen with new transport logic")
+		logger.Sugar.Warn("[CentralServer] Received DataMessage wrapper, this shouldn't happen with new transport logic")
 		return nil
 
 	default:
-		logger.Sugar.Errorf("[PeerServer] Unknown message type: %T", v)
+		logger.Sugar.Errorf("[CentralServer] Unknown message type: %T", v)
 	}
 	return nil
 }
@@ -121,22 +121,22 @@ func (c *CentralServer) handleRequestChunkData(from string, msg protocol.Request
 	c.mu.Unlock()
 
 	if fileMetadata == nil {
-		logger.Sugar.Errorf("[PeerServer] No file metadata found for file ID: %s", fileId)
+		logger.Sugar.Errorf("[CentralServer] No file metadata found for file ID: %s", fileId)
 		return fmt.Errorf("file metadata not found")
 	}
 
 	logger.Sugar.Info(msg)
 
 	// Send protocol object
-	logger.Sugar.Infof("[PeerServer] Sending metadata to peer %s", peer.Addr())
+	logger.Sugar.Infof("[CentralServer] Sending metadata to peer %s", peer.Addr())
 
 	err := peer.Send(*fileMetadata) // Send the struct directly
 	if err != nil {
-		logger.Sugar.Errorf("[PeerServer] Failed to send data to peer %s: %v", peer.Addr(), err)
+		logger.Sugar.Errorf("[CentralServer] Failed to send data to peer %s: %v", peer.Addr(), err)
 		return err
 	}
 
-	logger.Sugar.Info("[PeerServer] Data sent successfully to peer", peer.Addr())
+	logger.Sugar.Info("[CentralServer] Data sent successfully to peer", peer.Addr())
 	return nil
 }
 
@@ -146,9 +146,39 @@ func (c *CentralServer) handleRegisterFile(from string, msg protocol.FileMetaDat
 	defer c.mu.Unlock()
 	// msg is a value.
 	c.files[msg.FileId] = &msg
-	logger.Sugar.Infof("[PeerServer] File ID: %s", msg.FileId)
+	logger.Sugar.Infof("[CentralServer] File ID: %s", msg.FileId)
 
 	return nil
+}
+
+func (c *CentralServer) GetStatus() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	status := fmt.Sprintf("Central Server Running on: %s\n", c.Transport.Addr())
+	status += fmt.Sprintf("Connected Peers: %d\n", len(c.peers))
+	status += fmt.Sprintf("Registered Files: %d\n", len(c.files))
+
+	for id, meta := range c.files {
+		status += fmt.Sprintf(" - File: %s.%s (ID: %s) Size: %d bytes\n", meta.FileName, meta.FileExtension, id, meta.FileSize)
+	}
+	return status
+}
+
+func (c *CentralServer) GetPeersList() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	var list []string
+	for addr := range c.peers {
+		list = append(list, addr)
+	}
+	return list
+}
+
+func (c *CentralServer) Stop() {
+	close(c.quitCh)
+	c.Transport.Close()
 }
 
 func (c *CentralServer) OnPeer(peer transport.Node) error {
@@ -156,7 +186,7 @@ func (c *CentralServer) OnPeer(peer transport.Node) error {
 	defer c.mu.Unlock()
 	// Always accept
 	c.peers[peer.Addr()] = peer
-	logger.Sugar.Infof("[PeerServer] listener central server peer connected with  %s", peer.Addr())
+	logger.Sugar.Infof("[CentralServer] listener central server peer connected with  %s", peer.Addr())
 
 	return nil
 }

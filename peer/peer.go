@@ -212,6 +212,7 @@ func (p *PeerServer) RegisterFile(path string) error {
 	logger.Sugar.Infof("[PeerServer] Registering file: %s", path)
 	file, err := os.Open(path)
 	if err != nil {
+		logger.Sugar.Errorf("[PeerServer] Registering file error: %s", path)
 		return fmt.Errorf("failed to open file: %w", err)
 	}
 	defer file.Close()
@@ -340,4 +341,28 @@ func (p *PeerServer) Start() error {
 
 	p.loop()
 	return nil
+}
+
+func (p *PeerServer) GetStatus() string {
+	p.peerLock.Lock()
+	defer p.peerLock.Unlock()
+
+	status := fmt.Sprintf("Peer Server Running on: %s\n", p.peerServAddr)
+	status += fmt.Sprintf("Central Server: %s ", p.cServerAddr)
+	if p.centralServerPeer != nil {
+		status += "  (Connected)\n"
+	} else {
+		status += "  (Disconnected)\n"
+	}
+	status += fmt.Sprintf("Connected Peers: %d\n", len(p.peers))
+
+	p.downloadsMutex.RLock()
+	status += fmt.Sprintf("Completed Downloads: %d\n", len(p.completedDownloads))
+	p.downloadsMutex.RUnlock()
+
+	return status
+}
+
+func (p *PeerServer) Stop() {
+	p.Transport.Close()
 }
