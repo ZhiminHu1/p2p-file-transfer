@@ -52,7 +52,7 @@ func (p *PeerServer) handleChunks(fileMetaData protocol.FileMetaData) error {
 		size := fileMetaData.ChunkSize
 		if index == uint32(len(fileMetaData.ChunkInfo)) {
 			// fix correct size of last chunk
-			remainder := fileMetaData.FileSize & fileMetaData.ChunkSize
+			remainder := fileMetaData.FileSize % fileMetaData.ChunkSize
 			if remainder > 0 {
 				size = remainder
 			}
