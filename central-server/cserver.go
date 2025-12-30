@@ -67,7 +67,6 @@ func (c *CentralServer) loop() {
 
 func (c *CentralServer) handleMessage(from string, msg protocol.RPC) error {
 	switch v := msg.Payload.(type) {
-	//there is no need to handle Peer Registration as it is handled by the onPeer
 
 	case protocol.FileMetaData:
 		return c.handleRegisterFile(from, v)
@@ -78,11 +77,6 @@ func (c *CentralServer) handleMessage(from string, msg protocol.RPC) error {
 		return c.registerSeeder(v)
 
 	case protocol.DataMessage:
-		// Handle unwrapped payload if necessary, or double-wrapped?
-		// My transport unwrap it. But let's be safe.
-		// Actually Transport consumes DataMessage and extracts Payload.
-		// So msg.Payload IS the inner struct.
-		// But if recursive...
 		logger.Sugar.Warn("Received DataMessage wrapper, this shouldn't happen with new transport logic")
 		return nil
 
@@ -101,51 +95,6 @@ func (c *CentralServer) registerSeeder(msg protocol.RegisterSeeder) error {
 		return fmt.Errorf("file with ID %s not found", msg.FileId)
 	}
 
-	for _, chunkMetadata := range fileMetadata.ChunkInfo {
-		// Check if the peer is already in the list
-		peerExists := false
-		for _, peer := range chunkMetadata.Owners {
-			if peer == msg.PeerAddr {
-				peerExists = true
-				break
-			}
-		}
-
-		// If the peer is not in the list, add it
-		if !peerExists {
-			// Careful: we need to update the map entry if it's a value receiver?
-			// But ChunkInfo is map[string]ChunkMetadata.
-			// modifying copy 'chunkMetadata' won't update map.
-			// Wait, previous code:
-			// for _, chunkMetadata := range fileMetadata.ChunkInfo
-			// chunkMetadata was a COPY if ChunkInfo value is struct.
-			// Let's check FileMetaData definition.
-			// ChunkInfo map[string]ChunkMetadata
-			// Yes, 'chunkMetadata' is a copy.
-			// Original code:
-			// for _, chunkMetadata := range fileMetadata.ChunkInfo { ... }
-			// It didn't seem to update the map?
-			// Oh, wait, in previous code:
-			// chunkMap[i] = &chunkMetaData (pointer)
-			// But in FileMetaData struct: ChunkInfo map[string]ChunkMetadata (value?)
-			// Let's check types.go: ChunkInfo map[string]ChunkMetadata.
-			// So iterating range gives a copy. Modifying it does NOTHING to the map.
-			// THIS WAS A BUG IN ORIGINAL CODE or I am misreading.
-			// Actually, let's look at original cserver.go:
-			/*
-				for _, chunkMetadata := range fileMetadata.ChunkInfo {
-					// ...
-					if !peerExists {
-						chunkMetadata.PeersWithChunk = append(...)
-					}
-				}
-			*/
-			// If `chunkMetadata` is a struct, `append` updates the field of the local copy.
-			// Unless `PeersWithChunk` is a slice (reference type), so modifying the underlying array might work IF capacity allows, but `append` might allocate new array.
-			// So yes, this was likely buggy or shaky.
-			// I should fix it.
-		}
-	}
 	// Correct loop:
 	for k, v := range fileMetadata.ChunkInfo {
 		peerExists := false
