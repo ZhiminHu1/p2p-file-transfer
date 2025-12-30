@@ -1,4 +1,4 @@
-package peer
+package storage
 
 import (
 	"bytes"
@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"tarun-kavipurapu/p2p-transfer/pkg"
+	"tarun-kavipurapu/p2p-transfer/pkg/protocol"
 )
 
 type Store struct {
@@ -68,7 +68,7 @@ func getChunkNumber(filename string) int {
 	return num
 }
 
-func (s *Store) createChunkDirectory(folderName string, hashString string) (string, error) {
+func (s *Store) CreateChunkDirectory(folderName string, hashString string) (string, error) {
 	fileDirectory := fmt.Sprintf("%s/%s", folderName, hashString)
 	err := os.MkdirAll(fileDirectory, os.ModePerm)
 	if err != nil {
@@ -94,9 +94,9 @@ func (s *Store) writeChunk(fileDirectory string, chunkIndex uint32, r io.Reader)
 	return nil
 }
 
-func (s *Store) divideToChunk(file *os.File, chunkSize int, fileDirectory string, peerServerAddr string) (error, map[uint32]*pkg.ChunkMetadata) {
+func (s *Store) DivideToChunk(file *os.File, chunkSize int, fileDirectory string, peerServerAddr string) (error, map[uint32]protocol.ChunkMetadata) {
 	buffer := make([]byte, chunkSize)
-	chunkMap := make(map[uint32]*pkg.ChunkMetadata) // Initialize the map
+	chunkMap := make(map[uint32]protocol.ChunkMetadata) // Initialize the map
 	for i := uint32(1); ; i++ {
 		bytesRead, err := file.Read(buffer)
 		if err != nil && err != io.EOF {
@@ -106,16 +106,16 @@ func (s *Store) divideToChunk(file *os.File, chunkSize int, fileDirectory string
 		if bytesRead == 0 {
 			break
 		}
-		chunkHash, err := pkg.HashChunk(bytes.NewReader(buffer[:bytesRead]))
+		chunkHash, err := HashChunk(bytes.NewReader(buffer[:bytesRead]))
 		if err != nil {
 			return err, nil
 		}
-		chunkMetaData := pkg.ChunkMetadata{
-			ChunkHash:      chunkHash,
-			ChunkIndex:     i,
-			PeersWithChunk: []string{peerServerAddr},
+		chunkMetaData := protocol.ChunkMetadata{
+			ChunkHash: chunkHash,
+			ChunkId:   i,
+			Owners:    []string{peerServerAddr},
 		}
-		chunkMap[i] = &chunkMetaData
+		chunkMap[i] = chunkMetaData
 
 		if err := s.writeChunk(fileDirectory, i, bytes.NewBuffer(buffer[:bytesRead])); err != nil {
 			return err, nil

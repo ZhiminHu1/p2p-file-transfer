@@ -5,7 +5,7 @@ import (
 	"os"
 	"sync"
 	"tarun-kavipurapu/p2p-transfer/peer"
-	"tarun-kavipurapu/p2p-transfer/pkg"
+
 	"time"
 )
 
@@ -14,11 +14,7 @@ func main() {
 	log.SetOutput(os.Stdout)
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	//this is the ip adress which the peer is listening
-	opts := pkg.TransportOpts{
-		ListenAddr: "127.0.0.1:8001",
-		Decoder:    pkg.GOBDecoder{},
-	}
-	p := peer.NewPeerServer(opts, "127.0.0.1:8000")
+	p := peer.NewPeerServer("127.0.0.1:8001", "127.0.0.1:8000")
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
@@ -31,8 +27,8 @@ func main() {
 	}()
 
 	time.Sleep(1 * time.Second)
-	//err := p.RegisterFile("C:\\Users\\13237\\Desktop\\githubproject\\p2p-file-transfer\\TestingFiles\\test_image.tif")
-	err := p.RegisterFile("D:\\video\\20251212_125553.mp4")
+	err := p.RegisterFile("C:\\Users\\13237\\Desktop\\githubproject\\p2p-file-transfer\\TestingFiles\\test_image.tif")
+	//err := p.RegisterFile("D:\\video\\20251212_125553.mp4")
 	// err := p.RegisterFile("D:\\Devlopement\\go-network-Stream\\TestingFiles\\test_image.tif")
 	if err != nil {
 		log.Println("Error Register peer", err)

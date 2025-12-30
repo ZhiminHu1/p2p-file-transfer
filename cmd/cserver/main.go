@@ -4,7 +4,6 @@ import (
 	"log"
 	"os"
 	centralserver "tarun-kavipurapu/p2p-transfer/central-server"
-	"tarun-kavipurapu/p2p-transfer/pkg"
 )
 
 func main() {
@@ -12,10 +11,7 @@ func main() {
 	log.SetOutput(os.Stdout)
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
-	opts := pkg.TransportOpts{
-		ListenAddr: "127.0.0.1:8000",
-		Decoder:    pkg.GOBDecoder{},
-	}
+	opts := "127.0.0.1:8000"
 	server := centralserver.NewCentralServer(opts)
 
 	err := server.Start()

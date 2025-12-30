@@ -1,41 +1,35 @@
 package centralserver
 
 import (
-	"bytes"
-	"encoding/gob"
 	"fmt"
 	"log"
 	"sync"
-	"tarun-kavipurapu/p2p-transfer/pkg"
+	"tarun-kavipurapu/p2p-transfer/pkg/protocol"
+	"tarun-kavipurapu/p2p-transfer/pkg/transport"
+	"tarun-kavipurapu/p2p-transfer/pkg/transport/tcp"
 )
 
 func init() {
-	gob.Register(pkg.FileMetaData{})
-	gob.Register(pkg.ChunkMetadata{})
-	gob.Register(pkg.RequestChunkData{})
-	gob.Register(pkg.ChunkRequestToPeer{})
-	gob.Register(pkg.RegisterSeeder{})
-
 }
 
 type CentralServer struct {
 	mu        sync.Mutex
-	peers     map[string]pkg.Peer //conn  Ip -> Peer
-	Transport pkg.Transport
-	files     map[string]*pkg.FileMetaData //fileId-->fileMetadata
+	peers     map[string]transport.Node
+	Transport transport.Transport
+	files     map[string]*protocol.FileMetaData
 	quitCh    chan struct{}
 }
 
-func NewCentralServer(opts pkg.TransportOpts) *CentralServer {
-	transport := pkg.NewTCPTransport(opts)
+func NewCentralServer(optsStr string) *CentralServer {
+	trans := tcp.NewTCPTransport(optsStr)
 
 	centralServer := CentralServer{
-		peers:     make(map[string]pkg.Peer),
-		Transport: transport,
-		files:     make(map[string]*pkg.FileMetaData),
+		peers:     make(map[string]transport.Node),
+		Transport: trans,
+		files:     make(map[string]*protocol.FileMetaData),
 		quitCh:    make(chan struct{}),
 	}
-	transport.OnPeer = centralServer.OnPeer
+	trans.SetOnPeer(centralServer.OnPeer)
 
 	return &centralServer
 
@@ -44,7 +38,7 @@ func NewCentralServer(opts pkg.TransportOpts) *CentralServer {
 func (c *CentralServer) Start() error {
 	fmt.Printf("[%s] starting CentralServer...\n", c.Transport.Addr())
 
-	err := c.Transport.ListenAndAccept("central-server-peer")
+	err := c.Transport.ListenAndAccept()
 	if err != nil {
 		return err
 	}
@@ -62,10 +56,7 @@ func (c *CentralServer) loop() {
 	for {
 		select {
 		case msg := <-c.Transport.Consume():
-			dataMsg := &pkg.DataMessage{
-				Payload: msg.Payload,
-			}
-			if err := c.handleMessage(msg.From, dataMsg); err != nil {
+			if err := c.handleMessage(msg.From, msg); err != nil {
 				log.Println("handle message error:", err)
 			}
 		case <-c.quitCh:
@@ -74,23 +65,34 @@ func (c *CentralServer) loop() {
 	}
 }
 
-func (c *CentralServer) handleMessage(from string, dataMsg *pkg.DataMessage) error {
-	switch v := dataMsg.Payload.(type) {
+func (c *CentralServer) handleMessage(from string, msg protocol.RPC) error {
+	switch v := msg.Payload.(type) {
 	//there is no need to handle Peer Registration as it is handled by the onPeer
 
-	case pkg.FileMetaData:
+	case protocol.FileMetaData:
 		return c.handleRegisterFile(from, v)
-	case pkg.RequestChunkData:
+	case protocol.RequestChunkData:
 		return c.handleRequestChunkData(from, v)
 
-	case pkg.RegisterSeeder:
+	case protocol.RegisterSeeder:
 		return c.registerSeeder(v)
 
+	case protocol.DataMessage:
+		// Handle unwrapped payload if necessary, or double-wrapped?
+		// My transport unwrap it. But let's be safe.
+		// Actually Transport consumes DataMessage and extracts Payload.
+		// So msg.Payload IS the inner struct.
+		// But if recursive...
+		log.Printf("Received DataMessage wrapper, this shouldn't happen with new transport logic")
+		return nil
+
+	default:
+		log.Printf("Unknown message type: %T", v)
 	}
 	return nil
 }
 
-func (c *CentralServer) registerSeeder(msg pkg.RegisterSeeder) error {
+func (c *CentralServer) registerSeeder(msg protocol.RegisterSeeder) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -102,7 +104,7 @@ func (c *CentralServer) registerSeeder(msg pkg.RegisterSeeder) error {
 	for _, chunkMetadata := range fileMetadata.ChunkInfo {
 		// Check if the peer is already in the list
 		peerExists := false
-		for _, peer := range chunkMetadata.PeersWithChunk {
+		for _, peer := range chunkMetadata.Owners {
 			if peer == msg.PeerAddr {
 				peerExists = true
 				break
@@ -111,14 +113,58 @@ func (c *CentralServer) registerSeeder(msg pkg.RegisterSeeder) error {
 
 		// If the peer is not in the list, add it
 		if !peerExists {
-			chunkMetadata.PeersWithChunk = append(chunkMetadata.PeersWithChunk, msg.PeerAddr)
+			// Careful: we need to update the map entry if it's a value receiver?
+			// But ChunkInfo is map[string]ChunkMetadata.
+			// modifying copy 'chunkMetadata' won't update map.
+			// Wait, previous code:
+			// for _, chunkMetadata := range fileMetadata.ChunkInfo
+			// chunkMetadata was a COPY if ChunkInfo value is struct.
+			// Let's check FileMetaData definition.
+			// ChunkInfo map[string]ChunkMetadata
+			// Yes, 'chunkMetadata' is a copy.
+			// Original code:
+			// for _, chunkMetadata := range fileMetadata.ChunkInfo { ... }
+			// It didn't seem to update the map?
+			// Oh, wait, in previous code:
+			// chunkMap[i] = &chunkMetaData (pointer)
+			// But in FileMetaData struct: ChunkInfo map[string]ChunkMetadata (value?)
+			// Let's check types.go: ChunkInfo map[string]ChunkMetadata.
+			// So iterating range gives a copy. Modifying it does NOTHING to the map.
+			// THIS WAS A BUG IN ORIGINAL CODE or I am misreading.
+			// Actually, let's look at original cserver.go:
+			/*
+				for _, chunkMetadata := range fileMetadata.ChunkInfo {
+					// ...
+					if !peerExists {
+						chunkMetadata.PeersWithChunk = append(...)
+					}
+				}
+			*/
+			// If `chunkMetadata` is a struct, `append` updates the field of the local copy.
+			// Unless `PeersWithChunk` is a slice (reference type), so modifying the underlying array might work IF capacity allows, but `append` might allocate new array.
+			// So yes, this was likely buggy or shaky.
+			// I should fix it.
+		}
+	}
+	// Correct loop:
+	for k, v := range fileMetadata.ChunkInfo {
+		peerExists := false
+		for _, p := range v.Owners {
+			if p == msg.PeerAddr {
+				peerExists = true
+				break
+			}
+		}
+		if !peerExists {
+			v.Owners = append(v.Owners, msg.PeerAddr)
+			fileMetadata.ChunkInfo[k] = v // Update map
 		}
 	}
 
 	log.Printf("Registered peer %s as a new seeder for file %s\n", msg.PeerAddr, msg.FileId)
 	return nil
 }
-func (c *CentralServer) handleRequestChunkData(from string, msg pkg.RequestChunkData) error {
+func (c *CentralServer) handleRequestChunkData(from string, msg protocol.RequestChunkData) error {
 	fileId := msg.FileId
 	c.mu.Lock()
 	fileMetadata := c.files[fileId]
@@ -132,70 +178,36 @@ func (c *CentralServer) handleRequestChunkData(from string, msg pkg.RequestChunk
 
 	log.Println(msg)
 
-	dataMessage := pkg.DataMessage{
-		Payload: pkg.FileMetaData{
-			FileId:        fileMetadata.FileId,
-			FileName:      fileMetadata.FileName,
-			FileExtension: fileMetadata.FileExtension,
-			FileSize:      fileMetadata.FileSize,
-			ChunkSize:     fileMetadata.ChunkSize,
-			ChunkInfo:     fileMetadata.ChunkInfo,
-		},
-	}
+	// Send protocol object
+	log.Printf("Sending metadata to peer %s\n", peer.Addr())
 
-	buf := new(bytes.Buffer)
-	if err := gob.NewEncoder(buf).Encode(dataMessage); err != nil {
-		log.Printf("Failed to encode data message: %v\n", err)
-		return err
-	}
-
-	dataToSend := buf.Bytes()
-	log.Printf("Sending %d bytes to peer %s\n", len(dataToSend), peer.RemoteAddr())
-
-	//sending the responsse back to the client
-	err := peer.Send(dataToSend)
+	err := peer.Send(*fileMetadata) // Send the struct directly
 	if err != nil {
-		log.Printf("Failed to send data to peer %s: %v\n", peer.RemoteAddr(), err)
+		log.Printf("Failed to send data to peer %s: %v\n", peer.Addr(), err)
 		return err
 	}
 
-	log.Println("Data sent successfully to peer", peer.RemoteAddr())
+	log.Println("Data sent successfully to peer", peer.Addr())
 	return nil
 }
 
-func (c *CentralServer) handleRegisterFile(from string, msg pkg.FileMetaData) error {
+func (c *CentralServer) handleRegisterFile(from string, msg protocol.FileMetaData) error {
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	fileMetadata := &msg
-	c.files[msg.FileId] = fileMetadata
+	// msg is a value.
+	c.files[msg.FileId] = &msg
 	log.Printf("File ID: %s\n", msg.FileId)
-	// log.Printf("File Name: %s\n", msg.FileName)
-	// log.Printf("File Extension: %s\n", msg.FileExtension)
-	// log.Printf("File Size: %d\n", msg.FileSize)
-	// log.Printf("Chunk Size: %d\n", msg.ChunkSize)
-	// log.Println("Chunk Info:")
-	// for chunkNumber, chunkMeta := range msg.ChunkInfo {
-	// 	log.Printf("  Chunk Number: %d\n", chunkNumber)
-	// 	log.Printf("    Chunk Hash: %s\n", chunkMeta.ChunkHash)
-	// 	log.Printf("    Chunk Index: %d\n", chunkMeta.ChunkIndex)
-	// 	log.Printf("    Peers With Chunk: %v\n", chunkMeta.PeersWithChunk)
-	// }
 
 	return nil
 }
 
-// OnPeer 由本层实现，决定如何处理新 peer（如加入 map、初始化状态等）
-func (c *CentralServer) OnPeer(peer pkg.Peer, connType string) error {
+func (c *CentralServer) OnPeer(peer transport.Node) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if connType == "central-server-peer" {
-		c.peers[peer.RemoteAddr().String()] = peer
-	} else {
-		return nil
-	}
-	log.Printf("listener central server peer connected with  %s", peer.RemoteAddr())
+	// Always accept
+	c.peers[peer.Addr()] = peer
+	log.Printf("listener central server peer connected with  %s", peer.Addr())
 
 	return nil
-
 }

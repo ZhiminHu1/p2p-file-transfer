@@ -1,60 +1,54 @@
 package peer
 
 import (
-	"bytes"
-	"encoding/binary"
-	"encoding/gob"
 	"fmt"
-	"io"
 	"log"
 	"os"
 	"strings"
 	"sync"
-	"tarun-kavipurapu/p2p-transfer/pkg"
 	"time"
+
+	"tarun-kavipurapu/p2p-transfer/pkg/protocol"
+	"tarun-kavipurapu/p2p-transfer/pkg/storage"
+	"tarun-kavipurapu/p2p-transfer/pkg/transport"
+	"tarun-kavipurapu/p2p-transfer/pkg/transport/tcp"
 )
 
 // this should have the Metadata of the files it posses
 type PeerServer struct {
 	peerLock           sync.Mutex
-	peers              map[string]pkg.Peer //conn
-	centralServerPeer  pkg.Peer
-	fileMetaDataInfo   map[string]*pkg.FileMetaData //fileId-->metaData
-	Transport          pkg.Transport
+	peers              map[string]transport.Node
+	centralServerPeer  transport.Node
+	fileMetaDataInfo   map[string]*protocol.FileMetaData
+	Transport          transport.Transport
 	peerServAddr       string
 	cServerAddr        string
-	store              Store
+	store              storage.Store
 	completedDownloads map[string]bool
 	downloadsMutex     sync.RWMutex
+
+	pendingChunksLock sync.Mutex
+	pendingChunks     map[string]chan protocol.ChunkDataResponse
 }
 
 func init() {
-	// 文件相关
-	gob.Register(pkg.FileMetaData{})
-	//
-	gob.Register(pkg.ChunkMetadata{})
-	// peer间文件请求相关
-	gob.Register(pkg.RequestChunkData{})
-	//
-	gob.Register(pkg.ChunkRequestToPeer{})
-	// 用于注册peer 的结构体
-	gob.Register(pkg.RegisterSeeder{})
 }
 
-func NewPeerServer(opts pkg.TransportOpts, cServerAddr string) *PeerServer {
-	transport := pkg.NewTCPTransport(opts)
+func NewPeerServer(addr string, cServerAddr string) *PeerServer {
+	trans := tcp.NewTCPTransport(addr)
 	peerServer := &PeerServer{
-		peers:              make(map[string]pkg.Peer),
-		peerServAddr:       transport.ListenAddr,
+		peers:              make(map[string]transport.Node),
+		peerServAddr:       addr,
 		peerLock:           sync.Mutex{},
-		Transport:          transport,
+		Transport:          trans,
 		cServerAddr:        cServerAddr,
-		store:              Store{},
-		fileMetaDataInfo:   make(map[string]*pkg.FileMetaData),
+		store:              storage.Store{},
+		fileMetaDataInfo:   make(map[string]*protocol.FileMetaData),
 		completedDownloads: make(map[string]bool),
 		downloadsMutex:     sync.RWMutex{},
+		pendingChunks:      make(map[string]chan protocol.ChunkDataResponse),
 	}
-	transport.OnPeer = peerServer.OnPeer
+	trans.SetOnPeer(peerServer.OnPeer)
 
 	log.Printf("[PeerServer] Initialized with address: %s", peerServer.peerServAddr)
 	return peerServer
@@ -69,31 +63,48 @@ func (p *PeerServer) loop() {
 	for {
 		select {
 		case msg := <-p.Transport.Consume():
-			dataMsg := &pkg.DataMessage{
-				Payload: msg.Payload,
-			}
-
-			if err := p.handleMessage(msg.From, dataMsg); err != nil {
+			if err := p.handleMessage(msg.From, msg); err != nil {
 				log.Printf("[PeerServer] Error handling message from %s: %v", msg.From, err)
 			}
 		}
 	}
 }
 
-func (p *PeerServer) handleMessage(from string, dataMsg *pkg.DataMessage) error {
-	switch v := dataMsg.Payload.(type) {
-	case pkg.FileMetaData:
+func (p *PeerServer) handleMessage(from string, msg protocol.RPC) error {
+	switch v := msg.Payload.(type) {
+	case protocol.FileMetaData:
 		log.Printf("[PeerServer] Received FileMetaData for file: %s", v.FileName)
 		return p.handleRequestChunks(from, v)
-	case pkg.ChunkRequestToPeer:
+	case protocol.ChunkRequestToPeer:
 		log.Printf("[PeerServer] Received ChunkRequestToPeer for file: %s, chunk: %d", v.FileId, v.ChunkId)
 		return p.SendChunkData(from, v)
+	case protocol.ChunkDataResponse:
+		return p.handleChunkDataResponse(v)
 	default:
-		return fmt.Errorf("unknown message type received from %s", from)
+		return fmt.Errorf("unknown message type received from %s: %T", from, v)
 	}
 }
 
-func (p *PeerServer) SendChunkData(from string, v pkg.ChunkRequestToPeer) error {
+// 使用 chunksMap优化
+func (p *PeerServer) handleChunkDataResponse(resp protocol.ChunkDataResponse) error {
+	key := fmt.Sprintf("%s:%d", resp.FileId, resp.ChunkId)
+	p.pendingChunksLock.Lock()
+	ch, exists := p.pendingChunks[key]
+	if exists {
+		delete(p.pendingChunks, key)
+	}
+	p.pendingChunksLock.Unlock()
+
+	if exists {
+		ch <- resp
+	} else {
+		log.Printf("[PeerServer] Warning: Received chunk data for %s but no pending request found.", key)
+	}
+	return nil
+}
+
+func (p *PeerServer) SendChunkData(from string, v protocol.ChunkRequestToPeer) error {
+	// Logic to read file and send data
 	filePath := fmt.Sprintf("C:\\Users\\13237\\Desktop\\githubproject\\p2p-file-transfer\\cmd\\peer/chunks-%s/%s/%s", strings.Split(p.peerServAddr, ":")[0], v.FileId, v.ChunkName)
 	log.Printf("[PeerServer] Sending chunk %d of file %s to %s", v.ChunkId, v.FileId, from)
 
@@ -103,33 +114,41 @@ func (p *PeerServer) SendChunkData(from string, v pkg.ChunkRequestToPeer) error 
 	}
 	defer file.Close()
 
+	// Read entire file into byte slice
 	fileInfo, err := file.Stat()
 	if err != nil {
-		return fmt.Errorf("failed to get file info: %w", err)
+		return err
+	}
+
+	data := make([]byte, fileInfo.Size())
+	_, err = file.Read(data)
+	if err != nil {
+		return err
+	}
+
+	response := protocol.ChunkDataResponse{
+		FileId:  v.FileId,
+		ChunkId: v.ChunkId,
+		Data:    data,
 	}
 
 	p.peerLock.Lock()
-	peer := p.peers[from]
+	peer, ok := p.peers[from]
 	p.peerLock.Unlock()
 
-	var buf bytes.Buffer
-	binary.Write(&buf, binary.LittleEndian, int64(v.ChunkId))
-	binary.Write(&buf, binary.LittleEndian, fileInfo.Size())
-
-	if _, err := peer.Write(buf.Bytes()); err != nil {
-		return fmt.Errorf("failed to send chunk metadata: %w", err)
+	if !ok {
+		return fmt.Errorf("peer %s not found in map", from)
 	}
 
-	n, err := io.Copy(peer, file)
-	if err != nil {
+	if err := peer.Send(response); err != nil {
 		return fmt.Errorf("failed to send chunk data: %w", err)
 	}
 
-	log.Printf("[PeerServer] Sent %d bytes of chunk %d to %s", n, v.ChunkId, from)
+	log.Printf("[PeerServer] Sent %d bytes of chunk %d to %s", len(data), v.ChunkId, from)
 	return nil
 }
 
-func (p *PeerServer) handleRequestChunks(from string, msg pkg.FileMetaData) error {
+func (p *PeerServer) handleRequestChunks(from string, msg protocol.FileMetaData) error {
 	log.Printf("[PeerServer] Handling request for chunks of file: %s", msg.FileName)
 	err := p.handleChunks(msg)
 	if err != nil {
@@ -138,19 +157,19 @@ func (p *PeerServer) handleRequestChunks(from string, msg pkg.FileMetaData) erro
 	}
 	return nil
 }
-func (p *PeerServer) OnPeer(peer pkg.Peer, connType string) error {
+
+func (p *PeerServer) OnPeer(peer transport.Node) error {
 	p.peerLock.Lock()
 	defer p.peerLock.Unlock()
 
-	switch connType {
-	case "peer-server":
-		p.peers[peer.RemoteAddr().String()] = peer
-		log.Printf("[PeerServer] New peer connected: %s", peer.RemoteAddr())
-	case "centralServer":
+	// Heuristic to check if it's the central server
+	// NOTE: This might be fragile if address string format differs slightly
+	if peer.Addr() == p.cServerAddr {
 		p.centralServerPeer = peer
-		log.Printf("[PeerServer] Connected to central server: %s", peer.RemoteAddr())
-	default:
-		log.Printf("[PeerServer] Peer connected as listener: %s", peer.RemoteAddr())
+		log.Printf("[PeerServer] Connected to central server: %s", peer.Addr())
+	} else {
+		p.peers[peer.Addr()] = peer
+		log.Printf("[PeerServer] New peer connected: %s", peer.Addr())
 	}
 
 	return nil
@@ -158,19 +177,22 @@ func (p *PeerServer) OnPeer(peer pkg.Peer, connType string) error {
 
 func (p *PeerServer) RegisterPeer() error {
 	log.Printf("[PeerServer] Attempting to register with central server: %s", p.cServerAddr)
-	err := p.Transport.Dial(p.cServerAddr, "centralServer")
+	// Dial returns the Node, and HandleConn starts loop (which calls OnPeer)
+	// We don't need to manually assign p.centralServerPeer here if OnPeer does it.
+	// But Dial returns the node immediately.
+	node, err := p.Transport.Dial(p.cServerAddr)
 	if err != nil {
 		return fmt.Errorf("failed to dial central server: %w", err)
 	}
 
-	time.Sleep(1 * time.Second)
+	// Ensure OnPeer logic ran or manual assignment
 	p.peerLock.Lock()
-	//err = p.centralServerPeer.Send([]byte{pkg.IncomingMessage})
+	p.centralServerPeer = node
 	p.peerLock.Unlock()
 
-	if err != nil {
-		return fmt.Errorf("failed to send registration message: %w", err)
-	}
+	// In original protocol, just connecting was enough?
+	// Or did we send a message?
+	// Original code: err = p.centralServerPeer.Send([]byte{pkg.IncomingMessage}) -- wait, that line was commented out in original file!
 
 	log.Printf("[PeerServer] Successfully registered with central server")
 	return nil
@@ -190,45 +212,42 @@ func (p *PeerServer) RegisterFile(path string) error {
 	}
 
 	fileName := strings.Split(fileInfo.Name(), ".")
-	hashString, err := pkg.HashFile(file)
+	hashString, err := storage.HashFile(file)
 	if err != nil {
 		return fmt.Errorf("failed to hash file: %w", err)
 	}
 
 	vaildDir := fmt.Sprintf("chunks-%s", strings.Split(p.peerServAddr, ":")[0])
-	//dir := fmt.Sprintf("chunks-%s", p.peerServAddr)
-	fileDirectory, err := p.store.createChunkDirectory(vaildDir, hashString)
+	fileDirectory, err := p.store.CreateChunkDirectory(vaildDir, hashString) // Fixed method casing if needed, previously createChunkDirectory (lowercase)
 	if err != nil {
 		return fmt.Errorf("failed to create chunk directory: %w", err)
 	}
 
 	const chunkSize = 1024 * 1024 * 4
-	err, chunkMap := p.store.divideToChunk(file, chunkSize, fileDirectory, p.peerServAddr)
+	err, chunkMap := p.store.DivideToChunk(file, chunkSize, fileDirectory, p.peerServAddr) // Fixed casing
 	if err != nil {
 		return fmt.Errorf("failed to process chunks: %w", err)
 	}
 
-	dataMessage := pkg.DataMessage{
-		Payload: pkg.FileMetaData{
-			FileId:        hashString,
-			FileName:      fileName[0],
-			FileExtension: fileName[1],
-			FileSize:      uint32(fileInfo.Size()),
-			ChunkSize:     chunkSize,
-			ChunkInfo:     chunkMap,
-		},
-	}
-
-	var buf bytes.Buffer
-	encoder := gob.NewEncoder(&buf)
-	if err := encoder.Encode(dataMessage); err != nil {
-		return fmt.Errorf("failed to encode file metadata: %w", err)
+	metaData := protocol.FileMetaData{
+		FileId:        hashString,
+		FileName:      fileName[0],
+		FileExtension: fileName[1],
+		FileSize:      uint32(fileInfo.Size()),
+		ChunkSize:     chunkSize,
+		ChunkInfo:     chunkMap,
 	}
 
 	time.Sleep(time.Millisecond * 600)
 	p.peerLock.Lock()
-	err = p.centralServerPeer.Send(buf.Bytes())
+	cs := p.centralServerPeer
 	p.peerLock.Unlock()
+
+	if cs == nil {
+		return fmt.Errorf("not connected to central server")
+	}
+
+	err = cs.Send(metaData)
 
 	if err != nil {
 		return fmt.Errorf("failed to send file metadata to central server: %w", err)
@@ -246,23 +265,22 @@ func (p *PeerServer) registerAsSeeder(fileId string) error {
 	if !exists || !isComplete {
 		return fmt.Errorf("file %s is not completely downloaded", fileId)
 	}
-	// 将自己的文件ID，以及本地址IP，打包发送给centralServer
-	registerMsg := pkg.DataMessage{
-		Payload: pkg.RegisterSeeder{
-			FileId:   fileId,
-			PeerAddr: p.peerServAddr,
-		},
+	// 发送注册成为seed的消息
+	registerMsg := protocol.RegisterSeeder{
+		FileId:   fileId,
+		PeerAddr: p.peerServAddr,
 	}
 
-	var buf bytes.Buffer
-	encoder := gob.NewEncoder(&buf)
-	if err := encoder.Encode(registerMsg); err != nil {
-		return fmt.Errorf("failed to encode register seeder message: %w", err)
-	}
-
+	// TCP连接并发数据写入不是安全的
 	p.peerLock.Lock()
-	err := p.centralServerPeer.Send(buf.Bytes())
+	cs := p.centralServerPeer
 	p.peerLock.Unlock()
+
+	if cs == nil {
+		return fmt.Errorf("not connected to central server")
+	}
+
+	err := cs.Send(registerMsg)
 
 	if err != nil {
 		return fmt.Errorf("failed to send register seeder message: %w", err)
@@ -274,21 +292,20 @@ func (p *PeerServer) registerAsSeeder(fileId string) error {
 
 func (p *PeerServer) RequestChunkData(fileId string) error {
 	log.Printf("[PeerServer] Requesting chunk data for file: %s", fileId)
-	dataMessage := pkg.DataMessage{
-		Payload: pkg.RequestChunkData{
-			FileId: fileId,
-		},
-	}
 
-	var buf bytes.Buffer
-	encoder := gob.NewEncoder(&buf)
-	if err := encoder.Encode(dataMessage); err != nil {
-		return fmt.Errorf("failed to encode chunk data request: %w", err)
+	req := protocol.RequestChunkData{
+		FileId: fileId,
 	}
 
 	p.peerLock.Lock()
-	err := p.centralServerPeer.Send(buf.Bytes())
+	cs := p.centralServerPeer
 	p.peerLock.Unlock()
+
+	if cs == nil {
+		return fmt.Errorf("not connected to central server")
+	}
+
+	err := cs.Send(req)
 
 	if err != nil {
 		return fmt.Errorf("failed to send chunk data request: %w", err)
@@ -301,7 +318,7 @@ func (p *PeerServer) RequestChunkData(fileId string) error {
 func (p *PeerServer) Start() error {
 	log.Printf("[PeerServer] Starting peer server on address: %s", p.Transport.Addr())
 
-	err := p.Transport.ListenAndAccept("peer-server")
+	err := p.Transport.ListenAndAccept()
 	if err != nil {
 		return fmt.Errorf("failed to start listening: %w", err)
 	}

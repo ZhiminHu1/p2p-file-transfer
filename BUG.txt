@@ -1,0 +1,2 @@
+1. 高并发场景下TCP连接复用
+2. chunk下载失败后，对progress_renderer的生命周期管理
