@@ -1,3 +1,3 @@
 1. 高并发场景下TCP连接复用
 2. chunk下载失败后，对progress_renderer的生命周期管理
-3. DeadLock:阻塞请求peerchunk数据(直到数据全部处理完、)，但是这个数据响应之后，仍需本身peer处理。
+3. DeadLock:阻塞请求peerChunk数据(直到数据全部处理完、)，但是这个数据响应之后，仍需本身peer处理。

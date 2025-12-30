@@ -3,6 +3,7 @@ package peer
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -112,8 +113,10 @@ func (p *PeerServer) handleChunkDataResponse(resp protocol.ChunkDataResponse) er
 
 func (p *PeerServer) SendChunkData(from string, v protocol.ChunkRequestToPeer) error {
 	// Logic to read file and send data
-	filePath := fmt.Sprintf("C:\\Users\\13237\\Desktop\\githubproject\\p2p-file-transfer\\cmd\\peer/chunks-%s/%s/%s", strings.Split(p.peerServAddr, ":")[0], v.FileId, v.ChunkName)
-	logger.Sugar.Infof("[PeerServer] Sending chunk %d of file %s to %s", v.ChunkId, v.FileId, from)
+	// Use relative path matching how chunks are created
+	baseDir := fmt.Sprintf("chunks-%s", strings.Split(p.peerServAddr, ":")[0])
+	filePath := filepath.Join(baseDir, v.FileId, v.ChunkName)
+	logger.Sugar.Infof("[PeerServer] Sending chunk %d of file %s to %s from path %s", v.ChunkId, v.FileId, from, filePath)
 
 	file, err := os.Open(filePath)
 	if err != nil {
