@@ -1,32 +1,29 @@
 package main
 
 import (
-	"log"
-	"os"
 	"tarun-kavipurapu/p2p-transfer/peer"
+	"tarun-kavipurapu/p2p-transfer/pkg/logger"
 
 	"time"
 )
 
 func main() {
 
-	log.SetOutput(os.Stdout)
-	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	p := peer.NewPeerServer("127.0.0.1:8002", "127.0.0.1:8000")
 	go func() {
 		err := p.Start()
 		if err != nil {
-			log.Fatalln(err)
+			logger.Sugar.Fatal(err)
 		}
 
 	}()
 
 	time.Sleep(1 * time.Second)
 
-	err := p.RequestChunkData("017934bd678d02194f615f9e27cab2a72839fc28653daaf81ac7933f2945467d")
+	err := p.RequestChunkData("56f89f1ae7bd3bba44d9c422cad2509ddd721406834f80181e59857f95ef784a")
 
 	if err != nil {
-		log.Println("Error in Chunk Request", err)
+		logger.Sugar.Error("Error in Chunk Request", err)
 	}
 	select {}
 }

@@ -2,8 +2,8 @@ package centralserver
 
 import (
 	"fmt"
-	"log"
 	"sync"
+	"tarun-kavipurapu/p2p-transfer/pkg/logger"
 	"tarun-kavipurapu/p2p-transfer/pkg/protocol"
 	"tarun-kavipurapu/p2p-transfer/pkg/transport"
 	"tarun-kavipurapu/p2p-transfer/pkg/transport/tcp"
@@ -36,7 +36,7 @@ func NewCentralServer(optsStr string) *CentralServer {
 }
 
 func (c *CentralServer) Start() error {
-	fmt.Printf("[%s] starting CentralServer...\n", c.Transport.Addr())
+	logger.Sugar.Infof("[%s] starting CentralServer...", c.Transport.Addr())
 
 	err := c.Transport.ListenAndAccept()
 	if err != nil {
@@ -49,7 +49,7 @@ func (c *CentralServer) Start() error {
 func (c *CentralServer) loop() {
 
 	defer func() {
-		log.Println("Central Serevr has stopped due to error or quit acction")
+		logger.Sugar.Info("Central Serevr has stopped due to error or quit acction")
 
 		c.Transport.Close()
 	}()
@@ -57,7 +57,7 @@ func (c *CentralServer) loop() {
 		select {
 		case msg := <-c.Transport.Consume():
 			if err := c.handleMessage(msg.From, msg); err != nil {
-				log.Println("handle message error:", err)
+				logger.Sugar.Error("handle message error:", err)
 			}
 		case <-c.quitCh:
 			return
@@ -83,11 +83,11 @@ func (c *CentralServer) handleMessage(from string, msg protocol.RPC) error {
 		// Actually Transport consumes DataMessage and extracts Payload.
 		// So msg.Payload IS the inner struct.
 		// But if recursive...
-		log.Printf("Received DataMessage wrapper, this shouldn't happen with new transport logic")
+		logger.Sugar.Warn("Received DataMessage wrapper, this shouldn't happen with new transport logic")
 		return nil
 
 	default:
-		log.Printf("Unknown message type: %T", v)
+		logger.Sugar.Errorf("Unknown message type: %T", v)
 	}
 	return nil
 }
@@ -161,7 +161,7 @@ func (c *CentralServer) registerSeeder(msg protocol.RegisterSeeder) error {
 		}
 	}
 
-	log.Printf("Registered peer %s as a new seeder for file %s\n", msg.PeerAddr, msg.FileId)
+	logger.Sugar.Infof("Registered peer %s as a new seeder for file %s", msg.PeerAddr, msg.FileId)
 	return nil
 }
 func (c *CentralServer) handleRequestChunkData(from string, msg protocol.RequestChunkData) error {
@@ -172,22 +172,22 @@ func (c *CentralServer) handleRequestChunkData(from string, msg protocol.Request
 	c.mu.Unlock()
 
 	if fileMetadata == nil {
-		log.Printf("No file metadata found for file ID: %s\n", fileId)
+		logger.Sugar.Errorf("No file metadata found for file ID: %s", fileId)
 		return fmt.Errorf("file metadata not found")
 	}
 
-	log.Println(msg)
+	logger.Sugar.Info(msg)
 
 	// Send protocol object
-	log.Printf("Sending metadata to peer %s\n", peer.Addr())
+	logger.Sugar.Infof("Sending metadata to peer %s", peer.Addr())
 
 	err := peer.Send(*fileMetadata) // Send the struct directly
 	if err != nil {
-		log.Printf("Failed to send data to peer %s: %v\n", peer.Addr(), err)
+		logger.Sugar.Errorf("Failed to send data to peer %s: %v", peer.Addr(), err)
 		return err
 	}
 
-	log.Println("Data sent successfully to peer", peer.Addr())
+	logger.Sugar.Info("Data sent successfully to peer", peer.Addr())
 	return nil
 }
 
@@ -197,7 +197,7 @@ func (c *CentralServer) handleRegisterFile(from string, msg protocol.FileMetaDat
 	defer c.mu.Unlock()
 	// msg is a value.
 	c.files[msg.FileId] = &msg
-	log.Printf("File ID: %s\n", msg.FileId)
+	logger.Sugar.Infof("File ID: %s", msg.FileId)
 
 	return nil
 }
@@ -207,7 +207,7 @@ func (c *CentralServer) OnPeer(peer transport.Node) error {
 	defer c.mu.Unlock()
 	// Always accept
 	c.peers[peer.Addr()] = peer
-	log.Printf("listener central server peer connected with  %s", peer.Addr())
+	logger.Sugar.Infof("listener central server peer connected with  %s", peer.Addr())
 
 	return nil
 }

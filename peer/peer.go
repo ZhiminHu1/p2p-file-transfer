@@ -2,12 +2,12 @@ package peer
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"strings"
 	"sync"
 	"time"
 
+	"tarun-kavipurapu/p2p-transfer/pkg/logger"
 	"tarun-kavipurapu/p2p-transfer/pkg/protocol"
 	"tarun-kavipurapu/p2p-transfer/pkg/storage"
 	"tarun-kavipurapu/p2p-transfer/pkg/transport"
@@ -50,21 +50,21 @@ func NewPeerServer(addr string, cServerAddr string) *PeerServer {
 	}
 	trans.SetOnPeer(peerServer.OnPeer)
 
-	log.Printf("[PeerServer] Initialized with address: %s", peerServer.peerServAddr)
+	logger.Sugar.Infof("[PeerServer] Initialized with address: %s", peerServer.peerServAddr)
 	return peerServer
 }
 
 func (p *PeerServer) loop() {
 	defer func() {
-		log.Printf("[PeerServer] Stopping due to error or quit action")
+		logger.Sugar.Infof("[PeerServer] Stopping due to error or quit action")
 		p.Transport.Close()
 	}()
-	log.Printf("[PeerServer] Starting main loop")
+	logger.Sugar.Infof("[PeerServer] Starting main loop")
 	for {
 		select {
 		case msg := <-p.Transport.Consume():
 			if err := p.handleMessage(msg.From, msg); err != nil {
-				log.Printf("[PeerServer] Error handling message from %s: %v", msg.From, err)
+				logger.Sugar.Errorf("[PeerServer] Error handling message from %s: %v", msg.From, err)
 			}
 		}
 	}
@@ -73,17 +73,17 @@ func (p *PeerServer) loop() {
 func (p *PeerServer) handleMessage(from string, msg protocol.RPC) error {
 	switch v := msg.Payload.(type) {
 	case protocol.FileMetaData:
-		log.Printf("[PeerServer] Received FileMetaData for file: %s", v.FileName)
+		logger.Sugar.Infof("[PeerServer] Received FileMetaData for file: %s", v.FileName)
 		// Handle chunks in a separate goroutine to avoid blocking the message loop
 		go func() {
 			if err := p.handleRequestChunks(from, v); err != nil {
-				log.Printf("[PeerServer] Error handling request chunks: %v", err)
+				logger.Sugar.Errorf("[PeerServer] Error handling request chunks: %v", err)
 			}
 		}()
 		return nil
 
 	case protocol.ChunkRequestToPeer:
-		log.Printf("[PeerServer] Received ChunkRequestToPeer for file: %s, chunk: %d", v.FileId, v.ChunkId)
+		logger.Sugar.Infof("[PeerServer] Received ChunkRequestToPeer for file: %s, chunk: %d", v.FileId, v.ChunkId)
 		return p.SendChunkData(from, v)
 	case protocol.ChunkDataResponse:
 		return p.handleChunkDataResponse(v)
@@ -105,7 +105,7 @@ func (p *PeerServer) handleChunkDataResponse(resp protocol.ChunkDataResponse) er
 	if exists {
 		ch <- resp
 	} else {
-		log.Printf("[PeerServer] Warning: Received chunk data for %s but no pending request found.", key)
+		logger.Sugar.Warnf("[PeerServer] Warning: Received chunk data for %s but no pending request found.", key)
 	}
 	return nil
 }
@@ -113,7 +113,7 @@ func (p *PeerServer) handleChunkDataResponse(resp protocol.ChunkDataResponse) er
 func (p *PeerServer) SendChunkData(from string, v protocol.ChunkRequestToPeer) error {
 	// Logic to read file and send data
 	filePath := fmt.Sprintf("C:\\Users\\13237\\Desktop\\githubproject\\p2p-file-transfer\\cmd\\peer/chunks-%s/%s/%s", strings.Split(p.peerServAddr, ":")[0], v.FileId, v.ChunkName)
-	log.Printf("[PeerServer] Sending chunk %d of file %s to %s", v.ChunkId, v.FileId, from)
+	logger.Sugar.Infof("[PeerServer] Sending chunk %d of file %s to %s", v.ChunkId, v.FileId, from)
 
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -151,15 +151,15 @@ func (p *PeerServer) SendChunkData(from string, v protocol.ChunkRequestToPeer) e
 		return fmt.Errorf("failed to send chunk data: %w", err)
 	}
 
-	log.Printf("[PeerServer] Sent %d bytes of chunk %d to %s", len(data), v.ChunkId, from)
+	logger.Sugar.Infof("[PeerServer] Sent %d bytes of chunk %d to %s", len(data), v.ChunkId, from)
 	return nil
 }
 
 func (p *PeerServer) handleRequestChunks(from string, msg protocol.FileMetaData) error {
-	log.Printf("[PeerServer] Handling request for chunks of file: %s", msg.FileName)
+	logger.Sugar.Infof("[PeerServer] Handling request for chunks of file: %s", msg.FileName)
 	err := p.handleChunks(msg)
 	if err != nil {
-		log.Printf("[PeerServer] Error handling chunks for file %s: %v", msg.FileName, err)
+		logger.Sugar.Errorf("[PeerServer] Error handling chunks for file %s: %v", msg.FileName, err)
 		return err
 	}
 	return nil
@@ -173,17 +173,17 @@ func (p *PeerServer) OnPeer(peer transport.Node) error {
 	// NOTE: This might be fragile if address string format differs slightly
 	if peer.Addr() == p.cServerAddr {
 		p.centralServerPeer = peer
-		log.Printf("[PeerServer] Connected to central server: %s", peer.Addr())
+		logger.Sugar.Infof("[PeerServer] Connected to central server: %s", peer.Addr())
 	} else {
 		p.peers[peer.Addr()] = peer
-		log.Printf("[PeerServer] New peer connected: %s", peer.Addr())
+		logger.Sugar.Infof("[PeerServer] New peer connected: %s", peer.Addr())
 	}
 
 	return nil
 }
 
 func (p *PeerServer) RegisterPeer() error {
-	log.Printf("[PeerServer] Attempting to register with central server: %s", p.cServerAddr)
+	logger.Sugar.Infof("[PeerServer] Attempting to register with central server: %s", p.cServerAddr)
 	// Dial returns the Node, and HandleConn starts loop (which calls OnPeer)
 	// We don't need to manually assign p.centralServerPeer here if OnPeer does it.
 	// But Dial returns the node immediately.
@@ -201,12 +201,12 @@ func (p *PeerServer) RegisterPeer() error {
 	// Or did we send a message?
 	// Original code: err = p.centralServerPeer.Send([]byte{pkg.IncomingMessage}) -- wait, that line was commented out in original file!
 
-	log.Printf("[PeerServer] Successfully registered with central server")
+	logger.Sugar.Infof("[PeerServer] Successfully registered with central server")
 	return nil
 }
 
 func (p *PeerServer) RegisterFile(path string) error {
-	log.Printf("[PeerServer] Registering file: %s", path)
+	logger.Sugar.Infof("[PeerServer] Registering file: %s", path)
 	file, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("failed to open file: %w", err)
@@ -260,7 +260,7 @@ func (p *PeerServer) RegisterFile(path string) error {
 		return fmt.Errorf("failed to send file metadata to central server: %w", err)
 	}
 
-	log.Printf("[PeerServer] Successfully registered file: %s with ID: %s", fileInfo.Name(), hashString)
+	logger.Sugar.Infof("[PeerServer] Successfully registered file: %s with ID: %s", fileInfo.Name(), hashString)
 	return nil
 }
 
@@ -293,12 +293,12 @@ func (p *PeerServer) registerAsSeeder(fileId string) error {
 		return fmt.Errorf("failed to send register seeder message: %w", err)
 	}
 
-	log.Printf("[PeerServer] Registered as seeder for file: %s", fileId)
+	logger.Sugar.Infof("[PeerServer] Registered as seeder for file: %s", fileId)
 	return nil
 }
 
 func (p *PeerServer) RequestChunkData(fileId string) error {
-	log.Printf("[PeerServer] Requesting chunk data for file: %s", fileId)
+	logger.Sugar.Infof("[PeerServer] Requesting chunk data for file: %s", fileId)
 
 	req := protocol.RequestChunkData{
 		FileId: fileId,
@@ -318,12 +318,12 @@ func (p *PeerServer) RequestChunkData(fileId string) error {
 		return fmt.Errorf("failed to send chunk data request: %w", err)
 	}
 
-	log.Printf("[PeerServer] Successfully sent request for chunk data of file: %s", fileId)
+	logger.Sugar.Infof("[PeerServer] Successfully sent request for chunk data of file: %s", fileId)
 	return nil
 }
 
 func (p *PeerServer) Start() error {
-	log.Printf("[PeerServer] Starting peer server on address: %s", p.Transport.Addr())
+	logger.Sugar.Infof("[PeerServer] Starting peer server on address: %s", p.Transport.Addr())
 
 	err := p.Transport.ListenAndAccept()
 	if err != nil {
@@ -332,7 +332,7 @@ func (p *PeerServer) Start() error {
 
 	err = p.RegisterPeer()
 	if err != nil {
-		log.Printf("[PeerServer] Warning: Failed to register peer: %v", err)
+		logger.Sugar.Warnf("[PeerServer] Warning: Failed to register peer: %v", err)
 	}
 
 	p.loop()

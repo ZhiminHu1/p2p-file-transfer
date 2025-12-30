@@ -3,13 +3,13 @@ package peer
 import (
 	"bytes"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"tarun-kavipurapu/p2p-transfer/pkg/logger"
 	"tarun-kavipurapu/p2p-transfer/pkg/protocol"
 	"tarun-kavipurapu/p2p-transfer/pkg/storage"
 )
@@ -66,7 +66,7 @@ func (p *PeerServer) handleChunks(fileMetaData protocol.FileMetaData) error {
 	go renderer.Start()
 	defer renderer.StopAndWait()
 
-	log.Printf("[PeerServer] Starting download of file %s (%s) with %d chunks", fileMetaData.FileName, fileMetaData.FileId, numOfChunks)
+	logger.Sugar.Infof("[PeerServer] Starting download of file %s (%s) with %d chunks", fileMetaData.FileName, fileMetaData.FileId, numOfChunks)
 
 	const maxWorkers = 5
 	workerPool := NewWorkerPool(maxWorkers)
@@ -103,7 +103,7 @@ func (p *PeerServer) handleChunks(fileMetaData protocol.FileMetaData) error {
 	for result := range workerPool.Results() {
 		chunkJob := result.Job.(*ChunkJob)
 		if result.Err != nil {
-			log.Printf("[PeerServer] Failed to fetch chunk %d from peer %s: %v", chunkJob.ChunkIndex, chunkJob.PeerAddr, result.Err)
+			logger.Sugar.Errorf("[PeerServer] Failed to fetch chunk %d from peer %s: %v", chunkJob.ChunkIndex, chunkJob.PeerAddr, result.Err)
 			tracker.FailChunk(chunkJob.ChunkIndex)
 			lastError = result.Err
 		} else {
@@ -124,26 +124,26 @@ func (p *PeerServer) handleChunks(fileMetaData protocol.FileMetaData) error {
 	// Mark tracker as complete
 	tracker.MarkComplete()
 
-	log.Printf("[PeerServer] All %d chunks fetched successfully for file %s. Reassembling...", numOfChunks, fileMetaData.FileName)
+	logger.Sugar.Infof("[PeerServer] All %d chunks fetched successfully for file %s. Reassembling...", numOfChunks, fileMetaData.FileName)
 	err := p.store.ReassembleFile(fileMetaData.FileId, fileMetaData.FileName, fileMetaData.FileExtension, p.peerServAddr)
 	if err != nil {
 		return fmt.Errorf("error reassembling file %s: %w", fileMetaData.FileName, err)
 	}
 
-	log.Printf("[PeerServer] File %s reassembled successfully", fileMetaData.FileName)
+	logger.Sugar.Infof("[PeerServer] File %s reassembled successfully", fileMetaData.FileName)
 
 	p.downloadsMutex.Lock()
 	p.completedDownloads[fileMetaData.FileId] = true
 	p.downloadsMutex.Unlock()
 
-	log.Printf("[PeerServer] Marked file %s (%s) as completed download", fileMetaData.FileName, fileMetaData.FileId)
+	logger.Sugar.Infof("[PeerServer] Marked file %s (%s) as completed download", fileMetaData.FileName, fileMetaData.FileId)
 
 	err = p.registerAsSeeder(fileMetaData.FileId)
 	if err != nil {
 		return fmt.Errorf("failed to register as seeder for file %s: %w", fileMetaData.FileName, err)
 	}
 
-	log.Printf("[PeerServer] Successfully registered as a new seeder for file %s", fileMetaData.FileName)
+	logger.Sugar.Infof("[PeerServer] Successfully registered as a new seeder for file %s", fileMetaData.FileName)
 	return nil
 }
 
@@ -171,7 +171,7 @@ func (p *PeerServer) fileRequest(fileId string, chunkIndex uint32, peerAddr stri
 	p.peerLock.Unlock()
 
 	if !exist {
-		log.Printf("connect peer addr : %s", peerAddr)
+		logger.Sugar.Infof("connect peer addr : %s", peerAddr)
 		// Connect connection
 		newNode, err := p.Transport.Dial(peerAddr)
 		if err != nil {

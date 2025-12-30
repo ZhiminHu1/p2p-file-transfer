@@ -1,15 +1,11 @@
 package main
 
 import (
-	"log"
-	"os"
 	centralserver "tarun-kavipurapu/p2p-transfer/central-server"
+	"tarun-kavipurapu/p2p-transfer/pkg/logger"
 )
 
 func main() {
-
-	log.SetOutput(os.Stdout)
-	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
 	opts := "127.0.0.1:8000"
 	server := centralserver.NewCentralServer(opts)
@@ -17,7 +13,7 @@ func main() {
 	err := server.Start()
 
 	if err != nil {
-		log.Println("Error Starting cserver ", err)
+		logger.Sugar.Error("Error Starting cserver ", err)
 	}
 
 }

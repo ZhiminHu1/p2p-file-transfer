@@ -2,10 +2,9 @@ package tcp
 
 import (
 	"encoding/gob"
-	"fmt"
-	"log"
 	"net"
 	"sync"
+	"tarun-kavipurapu/p2p-transfer/pkg/logger"
 	"tarun-kavipurapu/p2p-transfer/pkg/protocol"
 	"tarun-kavipurapu/p2p-transfer/pkg/transport"
 )
@@ -91,7 +90,7 @@ func (t *TCPTransport) acceptLoop() {
 			case <-t.rpcCh: // just a check, not robust, but standard net error check is better
 				return
 			default:
-				fmt.Printf("TCP accept error: %s\n", err)
+				logger.Sugar.Errorf("TCP accept error: %s", err)
 				continue
 			}
 		}
@@ -115,12 +114,10 @@ func (t *TCPTransport) handleConn(conn net.Conn, node transport.Node, outbound b
 		var msg protocol.DataMessage
 		if err := dec.Decode(&msg); err != nil {
 			if err.Error() != "EOF" {
-				log.Printf("TCP read error from %s: %s", conn.RemoteAddr(), err)
+				logger.Sugar.Errorf("TCP read error from %s: %s", conn.RemoteAddr(), err)
 			}
 			return
 		}
-		log.Printf("TCP read message from %s, ountbound %t", conn.RemoteAddr(), outbound)
-
 		t.rpcCh <- protocol.RPC{
 			From:    conn.RemoteAddr().String(),
 			Payload: msg.Payload,
