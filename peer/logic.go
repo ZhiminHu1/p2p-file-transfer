@@ -252,6 +252,7 @@ func (p *PeerServer) saveChunk(fileId string, chunkIndex uint32, data []byte, ex
 	return nil
 }
 
+// todo 负载均衡算法具有脆弱性
 func assignChunks(fileMetaData protocol.FileMetaData) map[uint32]string {
 	chunkPeerAssign := make(map[uint32]string) //chunkIndex->peer
 	peerLoad := make(map[string]uint32)        //peerId ->number of chunks

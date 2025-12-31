@@ -30,6 +30,7 @@ type PeerServer struct {
 
 	pendingChunksLock sync.Mutex
 	pendingChunks     map[string]chan protocol.ChunkDataResponse
+	quitCh            chan struct{}
 }
 
 func init() {
@@ -48,6 +49,7 @@ func NewPeerServer(addr string, cServerAddr string) *PeerServer {
 		completedDownloads: make(map[string]bool),
 		downloadsMutex:     sync.RWMutex{},
 		pendingChunks:      make(map[string]chan protocol.ChunkDataResponse),
+		quitCh:             make(chan struct{}),
 	}
 	trans.SetOnPeer(peerServer.OnPeer)
 
@@ -67,6 +69,8 @@ func (p *PeerServer) loop() {
 			if err := p.handleMessage(msg.From, msg); err != nil {
 				logger.Sugar.Errorf("[PeerServer] Error handling message from %s: %v", msg.From, err)
 			}
+		case <-p.quitCh:
+			return
 		}
 	}
 }
@@ -205,7 +209,31 @@ func (p *PeerServer) RegisterPeer() error {
 	// Original code: err = p.centralServerPeer.Send([]byte{pkg.IncomingMessage}) -- wait, that line was commented out in original file!
 
 	logger.Sugar.Infof("[PeerServer] Successfully registered with central server")
+	go p.startHeartbeat()
 	return nil
+}
+
+func (p *PeerServer) startHeartbeat() {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-p.quitCh:
+			return
+		case <-ticker.C:
+			p.peerLock.Lock()
+			cs := p.centralServerPeer
+			p.peerLock.Unlock()
+
+			if cs != nil {
+				err := cs.Send(protocol.Heartbeat{Timestamp: time.Now().Unix()})
+				if err != nil {
+					logger.Sugar.Errorf("[PeerServer] Failed to send heartbeat: %v", err)
+				}
+			}
+		}
+	}
 }
 
 func (p *PeerServer) RegisterFile(path string) error {
@@ -364,5 +392,6 @@ func (p *PeerServer) GetStatus() string {
 }
 
 func (p *PeerServer) Stop() {
+	close(p.quitCh)
 	p.Transport.Close()
 }

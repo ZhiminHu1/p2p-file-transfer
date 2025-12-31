@@ -3,6 +3,8 @@ package centralserver
 import (
 	"fmt"
 	"sync"
+	"time"
+
 	"tarun-kavipurapu/p2p-transfer/pkg/logger"
 	"tarun-kavipurapu/p2p-transfer/pkg/protocol"
 	"tarun-kavipurapu/p2p-transfer/pkg/transport"
@@ -15,6 +17,7 @@ func init() {
 type CentralServer struct {
 	mu        sync.Mutex
 	peers     map[string]transport.Node
+	lastSeen  map[string]time.Time
 	Transport transport.Transport
 	files     map[string]*protocol.FileMetaData
 	quitCh    chan struct{}
@@ -25,6 +28,7 @@ func NewCentralServer(optsStr string) *CentralServer {
 
 	centralServer := CentralServer{
 		peers:     make(map[string]transport.Node),
+		lastSeen:  make(map[string]time.Time),
 		Transport: trans,
 		files:     make(map[string]*protocol.FileMetaData),
 		quitCh:    make(chan struct{}),
@@ -42,6 +46,7 @@ func (c *CentralServer) Start() error {
 	if err != nil {
 		return err
 	}
+	go c.monitorPeers()
 	c.loop()
 	return nil
 }
@@ -78,6 +83,13 @@ func (c *CentralServer) handleMessage(from string, msg protocol.RPC) error {
 
 	case protocol.DataMessage:
 		logger.Sugar.Warn("[CentralServer] Received DataMessage wrapper, this shouldn't happen with new transport logic")
+		return nil
+
+	case protocol.Heartbeat:
+		logger.Sugar.Infof("[CentralServer] Received Heartbeat, from [%s]", from)
+		c.mu.Lock()
+		c.lastSeen[from] = time.Now()
+		c.mu.Unlock()
 		return nil
 
 	default:
@@ -118,14 +130,26 @@ func (c *CentralServer) handleRequestChunkData(from string, msg protocol.Request
 	c.mu.Lock()
 	fileMetadata := c.files[fileId]
 	peer := c.peers[from]
-	c.mu.Unlock()
 
 	if fileMetadata == nil {
 		logger.Sugar.Errorf("[CentralServer] No file metadata found for file ID: %s", fileId)
 		return fmt.Errorf("file metadata not found")
 	}
 
-	logger.Sugar.Info(msg)
+	//logger.Sugar.Info(msg)
+	// 检查chunks的活跃owner
+	for chunkId, chunkInfo := range fileMetadata.ChunkInfo {
+		var activeOwners []string
+		for _, ownerAddr := range chunkInfo.Owners {
+			// 检查owner是否在活跃列表中
+			if _, exist := c.peers[ownerAddr]; exist {
+				activeOwners = append(activeOwners, ownerAddr)
+			}
+		}
+		chunkInfo.Owners = activeOwners
+		fileMetadata.ChunkInfo[chunkId] = chunkInfo
+	}
+	c.mu.Unlock()
 
 	// Send protocol object
 	logger.Sugar.Infof("[CentralServer] Sending metadata to peer %s", peer.Addr())
@@ -186,7 +210,35 @@ func (c *CentralServer) OnPeer(peer transport.Node) error {
 	defer c.mu.Unlock()
 	// Always accept
 	c.peers[peer.Addr()] = peer
+	c.lastSeen[peer.Addr()] = time.Now()
 	logger.Sugar.Infof("[CentralServer] listener central server peer connected with  %s", peer.Addr())
 
 	return nil
+}
+
+func (c *CentralServer) monitorPeers() {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-c.quitCh:
+			return
+		case <-ticker.C:
+			c.mu.Lock()
+			now := time.Now()
+			for addr, lastTime := range c.lastSeen {
+				if now.Sub(lastTime) > 15*time.Second {
+					logger.Sugar.Warnf("[CentralServer] Peer %s timed out, removing...", addr)
+					if node, exists := c.peers[addr]; exists {
+						node.Close()
+						delete(c.peers, addr)
+					}
+					delete(c.lastSeen, addr)
+					// 我们在别处实现掉线peer的文件清理逻辑
+				}
+			}
+			c.mu.Unlock()
+		}
+	}
 }

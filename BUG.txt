@@ -1,3 +1,8 @@
 1. 高并发场景下TCP连接复用
 2. chunk下载失败后，对progress_renderer的生命周期管理
 3. DeadLock:阻塞请求peerChunk数据(直到数据全部处理完、)，但是这个数据响应之后，仍需本身peer处理。
+4. peer异常TCP连接数量
+5. TCP流式传输优化大文件传输效率，实现0拷贝
+6. 响应数据peer的故障处理与高可用(涉及到，centralServer、peerServer、负载均衡算法)
+
+

@@ -10,10 +10,13 @@ func init() {
 	gob.Register(ChunkRequestToPeer{})
 	gob.Register(RegisterSeeder{})
 	gob.Register(ChunkDataResponse{})
+	gob.Register(Heartbeat{})
 }
 
 // Message Types
 const (
+	// 未来可能会优化大文件传输效率，
+	// TCP的流式传输可以实现零拷贝
 	IncomingStream  = 0x2
 	IncomingMessage = 0x1
 )
@@ -73,4 +76,8 @@ type ChunkDataResponse struct {
 	FileId  string
 	ChunkId uint32
 	Data    []byte
+}
+
+type Heartbeat struct {
+	Timestamp int64
 }
