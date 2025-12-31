@@ -2,9 +2,12 @@ package centralserver
 
 import (
 	"fmt"
+	"net"
+	"strconv"
 	"sync"
 	"time"
 
+	"tarun-kavipurapu/p2p-transfer/pkg/discovery"
 	"tarun-kavipurapu/p2p-transfer/pkg/logger"
 	"tarun-kavipurapu/p2p-transfer/pkg/protocol"
 	"tarun-kavipurapu/p2p-transfer/pkg/transport"
@@ -15,23 +18,25 @@ func init() {
 }
 
 type CentralServer struct {
-	mu        sync.Mutex
-	peers     map[string]transport.Node
-	lastSeen  map[string]time.Time
-	Transport transport.Transport
-	files     map[string]*protocol.FileMetaData
-	quitCh    chan struct{}
+	mu         sync.Mutex
+	peers      map[string]transport.Node
+	lastSeen   map[string]time.Time
+	Transport  transport.Transport
+	files      map[string]*protocol.FileMetaData
+	quitCh     chan struct{}
+	advertiser *discovery.Advertiser
 }
 
-func NewCentralServer(optsStr string) *CentralServer {
-	trans := tcp.NewTCPTransport(optsStr)
+func NewCentralServer(addr string) *CentralServer {
+	trans := tcp.NewTCPTransport(addr)
 
 	centralServer := CentralServer{
-		peers:     make(map[string]transport.Node),
-		lastSeen:  make(map[string]time.Time),
-		Transport: trans,
-		files:     make(map[string]*protocol.FileMetaData),
-		quitCh:    make(chan struct{}),
+		peers:      make(map[string]transport.Node),
+		lastSeen:   make(map[string]time.Time),
+		Transport:  trans,
+		files:      make(map[string]*protocol.FileMetaData),
+		quitCh:     make(chan struct{}),
+		advertiser: discovery.NewAdvertiser(),
 	}
 	trans.SetOnPeer(centralServer.OnPeer)
 
@@ -46,6 +51,26 @@ func (c *CentralServer) Start() error {
 	if err != nil {
 		return err
 	}
+
+	// Start mDNS advertisement
+	_, portStr, err := net.SplitHostPort(c.Transport.Addr())
+	if err != nil {
+		logger.Sugar.Errorf("[CentralServer] Failed to parse address: %v", err)
+		return nil
+	}
+	port, err := strconv.Atoi(portStr)
+	if err == nil && port > 0 {
+		meta := map[string]string{
+			"version": "1.0.0",
+			"type":    "central-server",
+		}
+		if err := c.advertiser.Start("p2p-central", port, meta); err != nil {
+			logger.Sugar.Errorf("[CentralServer] Failed to start mDNS advertisement: %v", err)
+		} else {
+			logger.Sugar.Infof("[CentralServer] mDNS advertisement started on port %d", port)
+		}
+	}
+
 	go c.monitorPeers()
 	c.loop()
 	return nil
@@ -86,7 +111,7 @@ func (c *CentralServer) handleMessage(from string, msg protocol.RPC) error {
 		return nil
 
 	case protocol.Heartbeat:
-		logger.Sugar.Infof("[CentralServer] Received Heartbeat, from [%s]", from)
+		//logger.Sugar.Infof("[CentralServer] Received Heartbeat, from [%s]", from)
 		c.mu.Lock()
 		c.lastSeen[from] = time.Now()
 		c.mu.Unlock()
@@ -201,6 +226,7 @@ func (c *CentralServer) GetPeersList() []string {
 }
 
 func (c *CentralServer) Stop() {
+	c.advertiser.Stop()
 	close(c.quitCh)
 	c.Transport.Close()
 }

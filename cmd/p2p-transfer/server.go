@@ -13,18 +13,17 @@ import (
 )
 
 var (
-	serverPort  int
-	interactive bool
+	centralServerAddr string
+	interactive       bool
 )
 
 var serverCmd = &cobra.Command{
 	Use:   "server",
 	Short: "Start the Central Server",
 	Run: func(cmd *cobra.Command, args []string) {
-		addr := fmt.Sprintf("127.0.0.1:%d", serverPort)
-		logger.Sugar.Infof("Starting Central Server on %s", addr)
+		logger.Sugar.Infof("Starting Central Server on %s", centralServerAddr)
 
-		server := centralserver.NewCentralServer(addr)
+		server := centralserver.NewCentralServer(centralServerAddr)
 
 		if interactive {
 			// Run server in background
@@ -104,6 +103,6 @@ func serverCompleter(d prompt.Document) []prompt.Suggest {
 
 func init() {
 	rootCmd.AddCommand(serverCmd)
-	serverCmd.Flags().IntVarP(&serverPort, "port", "p", 8000, "Port to listen on")
+	serverCmd.Flags().StringVarP(&centralServerAddr, "addr", "a", "0.0.0.0:8000", "Central server addr to listen on")
 	serverCmd.Flags().BoolVarP(&interactive, "interactive", "i", false, "Start in interactive mode")
 }

@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
 	"time"
 
 	"tarun-kavipurapu/p2p-transfer/peer"
+	"tarun-kavipurapu/p2p-transfer/pkg/discovery"
 	"tarun-kavipurapu/p2p-transfer/pkg/logger"
 
 	"github.com/c-bata/go-prompt"
@@ -16,6 +18,7 @@ import (
 var (
 	peerAddr        string
 	serverAddr      string
+	autoDiscover    bool
 	fileToRegister  string
 	fileToDownload  string
 	peerInteractive bool
@@ -25,6 +28,39 @@ var peerCmd = &cobra.Command{
 	Use:   "peer",
 	Short: "Start a Peer Node",
 	Run: func(cmd *cobra.Command, args []string) {
+		if autoDiscover {
+			// or if the user explicitly requested auto-discovery
+			logger.Sugar.Info("Attempting to discover Central Server via mDNS...")
+
+			resolver, err := discovery.NewResolver()
+			if err != nil {
+				logger.Sugar.Errorf("Failed to initialize mDNS resolver: %v. Falling back to default address.", err)
+			} else {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+
+				ch, err := resolver.Browse(ctx)
+				if err != nil {
+					logger.Sugar.Errorf("Failed to browse services: %v", err)
+				} else {
+					// Wait for the first service found
+					select {
+					case service, ok := <-ch:
+						if ok && len(service.IPs) > 0 {
+							// Prefer the first IP found, construct address
+							discoveredAddr := fmt.Sprintf("%s:%d", service.IPs[0], service.Port)
+							logger.Sugar.Infof("Discovered Central Server at %s", discoveredAddr)
+							serverAddr = discoveredAddr
+						} else {
+							logger.Sugar.Warn("No Central Server discovered within timeout")
+						}
+					case <-ctx.Done():
+						logger.Sugar.Warn("Discovery timed out")
+					}
+				}
+			}
+		}
+
 		logger.Sugar.Infof("Starting Peer Node on %s, connecting to Server %s", peerAddr, serverAddr)
 
 		p := peer.NewPeerServer(peerAddr, serverAddr)
@@ -133,6 +169,7 @@ func init() {
 	rootCmd.AddCommand(peerCmd)
 	peerCmd.Flags().StringVarP(&peerAddr, "addr", "a", "127.0.0.1:8001", "Address for this peer to listen on")
 	peerCmd.Flags().StringVarP(&serverAddr, "server", "s", "127.0.0.1:8000", "Address of the Central Server")
+	peerCmd.Flags().BoolVar(&autoDiscover, "auto-discover", false, "Automatically discover Central Server")
 	peerCmd.Flags().StringVarP(&fileToRegister, "register", "r", "", "Path to a file to register/seed immediately")
 	peerCmd.Flags().StringVarP(&fileToDownload, "download", "d", "", "File Hash ID to download immediately")
 	peerCmd.Flags().BoolVarP(&peerInteractive, "interactive", "i", false, "Start in interactive mode")

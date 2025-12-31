@@ -2,6 +2,7 @@ package peer
 
 import (
 	"sync"
+	"tarun-kavipurapu/p2p-transfer/pkg/logger"
 )
 
 type Job interface {
@@ -36,6 +37,7 @@ func (wp *WorkerPool) Start() {
 		go func() {
 			defer wg.Done()
 			for job := range wp.jobs {
+				logger.Sugar.Infof("[PeerServer] Starting job #%d", i)
 				result := Result{Job: job, Err: job.Execute()}
 				wp.results <- result
 			}
