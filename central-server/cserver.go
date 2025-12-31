@@ -163,6 +163,7 @@ func (c *CentralServer) handleRequestChunkData(from string, msg protocol.Request
 
 	//logger.Sugar.Info(msg)
 	// 检查chunks的活跃owner
+	// todo BGU待修复
 	for chunkId, chunkInfo := range fileMetadata.ChunkInfo {
 		var activeOwners []string
 		for _, ownerAddr := range chunkInfo.Owners {
