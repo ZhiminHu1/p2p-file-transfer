@@ -21,52 +21,52 @@ type ChunkStatus struct {
 }
 
 type ChunkJob struct {
-	FileId     string
-	ChunkIndex uint32
-	PeerAddr   string
-	ChunkHash  string
-	p          *PeerServer
-	tracker    *DownloadTracker
+	FileId          string
+	ChunkIndex      uint32
+	PeerAddr        string
+	ChunkHash       string
+	p               *PeerServer
+	downloadTracker *DownloadTracker
 }
 
 func (cj *ChunkJob) Execute() error {
-	return cj.p.fileRequest(cj.FileId, cj.ChunkIndex, cj.PeerAddr, cj.ChunkHash, cj.tracker)
+	return cj.p.fileRequest(cj.FileId, cj.ChunkIndex, cj.PeerAddr, cj.ChunkHash, cj.downloadTracker)
 }
 
-func (p *PeerServer) handleChunks(fileMetaData protocol.FileMetaData) error {
-	numOfChunks := uint32(len(fileMetaData.ChunkInfo))
-	chunkPeerAssign := assignChunks(fileMetaData)
+func (p *PeerServer) handleChunks(fileMetadata protocol.FileMetadata) error {
+	numOfChunks := uint32(len(fileMetadata.ChunkInfo))
+	chunkPeerAssign := assignChunks(fileMetadata)
 
 	// Create progress tracker
-	tracker := NewDownloadTracker(
-		fileMetaData.FileId,
-		fileMetaData.FileName,
-		fileMetaData.FileExtension,
-		uint64(fileMetaData.FileSize),
+	downloadTracker := NewDownloadTracker(
+		fileMetadata.FileId,
+		fileMetadata.FileName,
+		fileMetadata.FileExtension,
+		uint64(fileMetadata.FileSize),
 		numOfChunks,
 	)
 
 	// Initialize chunk sizes to display progress of downloading
 	chunkSizes := make(map[uint32]uint32)
-	for index := range fileMetaData.ChunkInfo {
-		size := fileMetaData.ChunkSize
-		if index == uint32(len(fileMetaData.ChunkInfo)) {
+	for index := range fileMetadata.ChunkInfo {
+		size := fileMetadata.ChunkSize
+		if index == uint32(len(fileMetadata.ChunkInfo)) {
 			// fix correct size of last chunk
-			remainder := fileMetaData.FileSize % fileMetaData.ChunkSize
+			remainder := fileMetadata.FileSize % fileMetadata.ChunkSize
 			if remainder > 0 {
 				size = remainder
 			}
 		}
 		chunkSizes[index] = size
 	}
-	tracker.InitChunks(chunkSizes)
+	downloadTracker.InitChunks(chunkSizes)
 
 	// Start progress renderer
-	renderer := NewProgressRenderer(tracker, true)
+	renderer := NewProgressRenderer(downloadTracker, true)
 	go renderer.Start()
 	defer renderer.StopAndWait()
 
-	logger.Sugar.Infof("[PeerServer] Starting download of file %s (%s) with %d chunks", fileMetaData.FileName, fileMetaData.FileId, numOfChunks)
+	logger.Sugar.Infof("[PeerServer] Starting download of file %s (%s) with %d chunks", fileMetadata.FileName, fileMetadata.FileId, numOfChunks)
 
 	const maxWorkers = 5
 	workerPool := NewWorkerPool(maxWorkers)
@@ -75,20 +75,20 @@ func (p *PeerServer) handleChunks(fileMetaData protocol.FileMetaData) error {
 	var wg sync.WaitGroup
 	for index, peerAddr := range chunkPeerAssign {
 		logger.Sugar.Debugf("[PeerServer] assign chunk: file=%s.%s fileId=%s chunk=%d source=%s",
-			fileMetaData.FileName, fileMetaData.FileExtension, fileMetaData.FileId, index, peerAddr)
+			fileMetadata.FileName, fileMetadata.FileExtension, fileMetadata.FileId, index, peerAddr)
 		wg.Add(1)
 		go func(index uint32, peerAddr string) {
 			defer wg.Done()
-			chunk := fileMetaData.ChunkInfo[index]
+			chunk := fileMetadata.ChunkInfo[index]
 			// Mark chunk as starting
-			tracker.StartChunk(index, peerAddr)
+			downloadTracker.StartChunk(index, peerAddr)
 			job := &ChunkJob{
-				FileId:     fileMetaData.FileId,
-				ChunkIndex: index,
-				PeerAddr:   peerAddr,
-				ChunkHash:  chunk.ChunkHash,
-				p:          p,
-				tracker:    tracker,
+				FileId:          fileMetadata.FileId,
+				ChunkIndex:      index,
+				PeerAddr:        peerAddr,
+				ChunkHash:       chunk.ChunkHash,
+				p:               p,
+				downloadTracker: downloadTracker,
 			}
 			workerPool.Submit(job)
 		}(index, peerAddr)
@@ -106,13 +106,13 @@ func (p *PeerServer) handleChunks(fileMetaData protocol.FileMetaData) error {
 		chunkJob := result.Job.(*ChunkJob)
 		if result.Err != nil {
 			logger.Sugar.Errorf("[PeerServer] chunk download failed: fileId=%s chunk=%d from=%s err=%v", chunkJob.FileId, chunkJob.ChunkIndex, chunkJob.PeerAddr, result.Err)
-			tracker.FailChunk(chunkJob.ChunkIndex)
+			downloadTracker.FailChunk(chunkJob.ChunkIndex)
 			lastError = result.Err
 		} else {
 			resultLock.Lock()
 			successfulChunks++
 			resultLock.Unlock()
-			tracker.CompleteChunk(chunkJob.ChunkIndex)
+			downloadTracker.CompleteChunk(chunkJob.ChunkIndex)
 		}
 	}
 	// 等待所有chunk下载完成
@@ -120,37 +120,37 @@ func (p *PeerServer) handleChunks(fileMetaData protocol.FileMetaData) error {
 
 	if successfulChunks != int(numOfChunks) {
 		renderer.RenderError(fmt.Errorf("download incomplete: %d/%d chunks", successfulChunks, numOfChunks))
-		return fmt.Errorf("download incomplete for file %s. Fetched %d/%d chunks. Last error: %v", fileMetaData.FileName, successfulChunks, numOfChunks, lastError)
+		return fmt.Errorf("download incomplete for file %s. Fetched %d/%d chunks. Last error: %v", fileMetadata.FileName, successfulChunks, numOfChunks, lastError)
 	}
 
 	// Mark tracker as complete
-	tracker.MarkComplete()
+	downloadTracker.MarkComplete()
 
-	logger.Sugar.Infof("[PeerServer] All %d chunks fetched successfully for file %s. Reassembling...", numOfChunks, fileMetaData.FileName)
-	err := p.store.ReassembleFile(fileMetaData.FileId, fileMetaData.FileName, fileMetaData.FileExtension, p.peerServAddr)
+	logger.Sugar.Infof("[PeerServer] All %d chunks fetched successfully for file %s. Reassembling...", numOfChunks, fileMetadata.FileName)
+	err := p.store.ReassembleFile(fileMetadata.FileId, fileMetadata.FileName, fileMetadata.FileExtension, p.peerServerAddr)
 	if err != nil {
-		return fmt.Errorf("error reassembling file %s: %w", fileMetaData.FileName, err)
+		return fmt.Errorf("error reassembling file %s: %w", fileMetadata.FileName, err)
 	}
 
-	logger.Sugar.Infof("[PeerServer] File %s reassembled successfully", fileMetaData.FileName)
+	logger.Sugar.Infof("[PeerServer] File %s reassembled successfully", fileMetadata.FileName)
 
 	p.downloadsMutex.Lock()
-	p.completedDownloads[fileMetaData.FileId] = true
+	p.completedDownloads[fileMetadata.FileId] = true
 	p.downloadsMutex.Unlock()
 
-	logger.Sugar.Infof("[PeerServer] Marked file %s (%s) as completed download", fileMetaData.FileName, fileMetaData.FileId)
+	logger.Sugar.Infof("[PeerServer] Marked file %s (%s) as completed download", fileMetadata.FileName, fileMetadata.FileId)
 
-	err = p.registerAsSeeder(fileMetaData.FileId)
+	err = p.registerAsSeeder(fileMetadata.FileId)
 	if err != nil {
-		return fmt.Errorf("failed to register as seeder for file %s: %w", fileMetaData.FileName, err)
+		return fmt.Errorf("failed to register as seeder for file %s: %w", fileMetadata.FileName, err)
 	}
 
-	logger.Sugar.Infof("[PeerServer] Successfully registered as a new seeder for file %s", fileMetaData.FileName)
+	logger.Sugar.Infof("[PeerServer] Successfully registered as a new seeder for file %s", fileMetadata.FileName)
 	return nil
 }
 
-// use async request to opt speed of downloading fileMetaData
-func (p *PeerServer) fileRequest(fileId string, chunkIndex uint32, peerAddr string, chunkHash string, tracker *DownloadTracker) error {
+// use async request to opt speed of downloading fileMetadata
+func (p *PeerServer) fileRequest(fileId string, chunkIndex uint32, peerAddr string, chunkHash string, downloadTracker *DownloadTracker) error {
 	// Async Request with Transport
 
 	// 1. Setup response channel
@@ -169,10 +169,10 @@ func (p *PeerServer) fileRequest(fileId string, chunkIndex uint32, peerAddr stri
 
 	// 2. Connect/Reuse connection
 	p.peerLock.Lock()
-	node, exist := p.peers[peerAddr]
+	node, exists := p.peers[peerAddr]
 	p.peerLock.Unlock()
 
-	if !exist {
+	if !exists {
 		logger.Sugar.Debugf("[PeerServer] dialing peer (no cached connection): %s", peerAddr)
 		// Connect connection
 		newNode, err := p.Transport.Dial(peerAddr)
@@ -210,13 +210,13 @@ func (p *PeerServer) fileRequest(fileId string, chunkIndex uint32, peerAddr stri
 
 	case resp := <-respCh:
 		// Process response
-		return p.saveChunk(fileId, chunkIndex, resp.Data, chunkHash, tracker)
+		return p.saveChunk(fileId, chunkIndex, resp.Data, chunkHash, downloadTracker)
 	case <-time.After(30 * time.Second):
 		return fmt.Errorf("timeout waiting for chunk %d", chunkIndex)
 	}
 }
 
-func (p *PeerServer) saveChunk(fileId string, chunkIndex uint32, data []byte, expectedHash string, tracker *DownloadTracker) error {
+func (p *PeerServer) saveChunk(fileId string, chunkIndex uint32, data []byte, expectedHash string, downloadTracker *DownloadTracker) error {
 	// Verify Hash in memory before writing to disk
 	dataReader := bytes.NewReader(data)
 	calculatedHash, err := storage.HashChunk(dataReader)
@@ -228,7 +228,7 @@ func (p *PeerServer) saveChunk(fileId string, chunkIndex uint32, data []byte, ex
 		return fmt.Errorf("chunk hash verification failed (memory). Expected: %s, Got: %s", expectedHash, calculatedHash)
 	}
 
-	baseDir := fmt.Sprintf("chunks-%s", strings.Split(p.peerServAddr, ":")[0])
+	baseDir := fmt.Sprintf("chunks-%s", strings.Split(p.peerServerAddr, ":")[0])
 	folderDirectory, err := p.store.CreateChunkDirectory(baseDir, fileId)
 	if err != nil {
 		return fmt.Errorf("failed to create chunk directory: %w", err)
@@ -247,19 +247,19 @@ func (p *PeerServer) saveChunk(fileId string, chunkIndex uint32, data []byte, ex
 		return err
 	}
 	// update tracker mark as chunk completed
-	if tracker != nil {
-		tracker.UpdateChunkProgress(chunkIndex, uint64(len(data)))
+	if downloadTracker != nil {
+		downloadTracker.UpdateChunkProgress(chunkIndex, uint64(len(data)))
 	}
 
 	return nil
 }
 
 // todo 负载均衡算法具有脆弱性
-func assignChunks(fileMetaData protocol.FileMetaData) map[uint32]string {
+func assignChunks(fileMetadata protocol.FileMetadata) map[uint32]string {
 	chunkPeerAssign := make(map[uint32]string) //chunkIndex->peer
 	peerLoad := make(map[string]uint32)        //peerId ->number of chunks
 
-	for index, chunkInfo := range fileMetaData.ChunkInfo {
+	for index, chunkInfo := range fileMetadata.ChunkInfo {
 		peers := chunkInfo.Owners
 		if len(peers) > 0 {
 			minPeer := peers[0]

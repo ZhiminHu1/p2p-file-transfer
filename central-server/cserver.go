@@ -22,7 +22,7 @@ type CentralServer struct {
 	peersByListen map[string]*peerInfo // ListenAddr -> peerInfo
 	peersByRemote map[string]*peerInfo // RemoteAddr -> peerInfo
 	Transport     transport.Transport
-	files         map[string]*protocol.FileMetaData
+	files         map[string]*protocol.FileMetadata
 	quitCh        chan struct{}
 	advertiser    *discovery.Advertiser
 }
@@ -37,17 +37,17 @@ type peerInfo struct {
 func NewCentralServer(addr string) *CentralServer {
 	trans := tcp.NewTCPTransport(addr)
 
-	centralServer := CentralServer{
+	server := CentralServer{
 		peersByListen: make(map[string]*peerInfo),
 		peersByRemote: make(map[string]*peerInfo),
 		Transport:     trans,
-		files:         make(map[string]*protocol.FileMetaData),
+		files:         make(map[string]*protocol.FileMetadata),
 		quitCh:        make(chan struct{}),
 		advertiser:    discovery.NewAdvertiser(),
 	}
-	trans.SetOnPeer(centralServer.OnPeer)
+	trans.SetOnPeer(server.OnPeer)
 
-	return &centralServer
+	return &server
 
 }
 
@@ -79,11 +79,11 @@ func (c *CentralServer) Start() error {
 	}
 
 	go c.monitorPeers()
-	c.loop()
+	c.messageLoop()
 	return nil
 }
 
-func (c *CentralServer) loop() {
+func (c *CentralServer) messageLoop() {
 
 	defer func() {
 		logger.Sugar.Info("[CentralServer] stopped (error or quit)")
@@ -105,7 +105,7 @@ func (c *CentralServer) loop() {
 func (c *CentralServer) handleMessage(from string, msg protocol.RPC) error {
 	switch v := msg.Payload.(type) {
 
-	case protocol.FileMetaData:
+	case protocol.FileMetadata:
 		return c.handleRegisterFile(from, v)
 	case protocol.RequestChunkData:
 		return c.handleRequestChunkData(from, v)
@@ -120,8 +120,8 @@ func (c *CentralServer) handleMessage(from string, msg protocol.RPC) error {
 	case protocol.Heartbeat:
 		// Heartbeat is frequent; keep it quiet unless debugging.
 		c.mu.Lock()
-		if pi, ok := c.peersByRemote[from]; ok {
-			pi.lastSeen = time.Now()
+		if peerInfo, ok := c.peersByRemote[from]; ok {
+			peerInfo.lastSeen = time.Now()
 		}
 		c.mu.Unlock()
 		return nil
@@ -207,7 +207,7 @@ func (c *CentralServer) handleRequestChunkData(from string, msg protocol.Request
 	return nil
 }
 
-func (c *CentralServer) handleRegisterFile(from string, msg protocol.FileMetaData) error {
+func (c *CentralServer) handleRegisterFile(from string, msg protocol.FileMetadata) error {
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -298,20 +298,20 @@ func (c *CentralServer) handlePeerRegister(from string, v protocol.PeerRegistrat
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	pi, ok := c.peersByRemote[from]
-	if !ok || pi == nil {
+	peerInfo, ok := c.peersByRemote[from]
+	if !ok || peerInfo == nil {
 		logger.Sugar.Errorf("[CentralServer] No peer registered for %s", from)
 		return fmt.Errorf("peer %s not found (remote)", from)
 	}
 
-	if v.ListenAddr != "" && pi.ListenAddr != v.ListenAddr {
+	if v.ListenAddr != "" && peerInfo.ListenAddr != v.ListenAddr {
 		// 清理旧的 地址
-		if cur := c.peersByListen[pi.ListenAddr]; cur == pi {
-			delete(c.peersByListen, pi.ListenAddr)
+		if cur := c.peersByListen[peerInfo.ListenAddr]; cur == peerInfo {
+			delete(c.peersByListen, peerInfo.ListenAddr)
 		}
 	}
-	pi.ListenAddr = v.ListenAddr
-	c.peersByListen[v.ListenAddr] = pi
+	peerInfo.ListenAddr = v.ListenAddr
+	c.peersByListen[v.ListenAddr] = peerInfo
 	logger.Sugar.Infof("[CentralServer] peer registered: remote=%s listen=%s", from, v.ListenAddr)
 
 	return nil

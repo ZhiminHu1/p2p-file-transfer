@@ -4,7 +4,7 @@ import "encoding/gob"
 
 func init() {
 	// Register types for GOB encoding
-	gob.Register(FileMetaData{})
+	gob.Register(FileMetadata{})
 	gob.Register(ChunkMetadata{})
 	gob.Register(RequestChunkData{})
 	gob.Register(ChunkRequestToPeer{})
@@ -12,7 +12,6 @@ func init() {
 	gob.Register(ChunkDataResponse{})
 	gob.Register(Heartbeat{})
 	gob.Register(PeerRegistration{})
-
 }
 
 // Message Types
@@ -43,7 +42,7 @@ type PeerRegistration struct {
 	ListenAddr string
 }
 
-type FileMetaData struct {
+type FileMetadata struct {
 	FileId        string
 	FileName      string
 	FileExtension string
