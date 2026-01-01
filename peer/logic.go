@@ -74,6 +74,8 @@ func (p *PeerServer) handleChunks(fileMetaData protocol.FileMetaData) error {
 
 	var wg sync.WaitGroup
 	for index, peerAddr := range chunkPeerAssign {
+		logger.Sugar.Debugf("[PeerServer] assign chunk: file=%s.%s fileId=%s chunk=%d source=%s",
+			fileMetaData.FileName, fileMetaData.FileExtension, fileMetaData.FileId, index, peerAddr)
 		wg.Add(1)
 		go func(index uint32, peerAddr string) {
 			defer wg.Done()
@@ -103,7 +105,7 @@ func (p *PeerServer) handleChunks(fileMetaData protocol.FileMetaData) error {
 	for result := range workerPool.Results() {
 		chunkJob := result.Job.(*ChunkJob)
 		if result.Err != nil {
-			logger.Sugar.Errorf("[PeerServer] Failed to fetch chunk %d from peer %s: %v", chunkJob.ChunkIndex, chunkJob.PeerAddr, result.Err)
+			logger.Sugar.Errorf("[PeerServer] chunk download failed: fileId=%s chunk=%d from=%s err=%v", chunkJob.FileId, chunkJob.ChunkIndex, chunkJob.PeerAddr, result.Err)
 			tracker.FailChunk(chunkJob.ChunkIndex)
 			lastError = result.Err
 		} else {
@@ -171,7 +173,7 @@ func (p *PeerServer) fileRequest(fileId string, chunkIndex uint32, peerAddr stri
 	p.peerLock.Unlock()
 
 	if !exist {
-		logger.Sugar.Infof("connect peer addr : %s", peerAddr)
+		logger.Sugar.Debugf("[PeerServer] dialing peer (no cached connection): %s", peerAddr)
 		// Connect connection
 		newNode, err := p.Transport.Dial(peerAddr)
 		if err != nil {

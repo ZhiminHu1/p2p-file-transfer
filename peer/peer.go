@@ -53,7 +53,7 @@ func NewPeerServer(addr string, cServerAddr string) *PeerServer {
 	}
 	trans.SetOnPeer(peerServer.OnPeer)
 
-	logger.Sugar.Infof("[PeerServer] Initialized with address: %s", peerServer.peerServAddr)
+	logger.Sugar.Infof("[PeerServer] initialized: listen=%s central=%s", peerServer.peerServAddr, peerServer.cServerAddr)
 	return peerServer
 }
 
@@ -190,7 +190,7 @@ func (p *PeerServer) OnPeer(peer transport.Node) error {
 }
 
 func (p *PeerServer) RegisterPeer() error {
-	logger.Sugar.Infof("[PeerServer] Attempting to register with central server: %s", p.cServerAddr)
+	logger.Sugar.Infof("[PeerServer] connecting to central server: %s", p.cServerAddr)
 	// Dial returns the Node, and HandleConn starts loop (which calls OnPeer)
 	// We don't need to manually assign p.centralServerPeer here if OnPeer does it.
 	// But Dial returns the node immediately.
@@ -204,11 +204,12 @@ func (p *PeerServer) RegisterPeer() error {
 	p.centralServerPeer = node
 	p.peerLock.Unlock()
 
-	// In original protocol, just connecting was enough?
-	// Or did we send a message?
-	// Original code: err = p.centralServerPeer.Send([]byte{pkg.IncomingMessage}) -- wait, that line was commented out in original file!
+	// 向服务器发送自己监听的地址
+	if err := p.centralServerPeer.Send(protocol.PeerRegistration{ListenAddr: p.peerServAddr}); err != nil {
+		return fmt.Errorf("failed to send peer registration (listen=%s): %w", p.peerServAddr, err)
+	}
 
-	logger.Sugar.Infof("[PeerServer] Successfully registered with central server")
+	logger.Sugar.Infof("[PeerServer] registered with central server: listen=%s", p.peerServAddr)
 	go p.startHeartbeat()
 	return nil
 }
@@ -229,7 +230,7 @@ func (p *PeerServer) startHeartbeat() {
 			if cs != nil {
 				err := cs.Send(protocol.Heartbeat{Timestamp: time.Now().Unix()})
 				if err != nil {
-					logger.Sugar.Errorf("[PeerServer] Failed to send heartbeat: %v", err)
+					logger.Sugar.Errorf("[PeerServer] failed to send heartbeat: err=%v", err)
 				}
 			}
 		}

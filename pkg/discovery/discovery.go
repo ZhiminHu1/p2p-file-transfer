@@ -150,7 +150,7 @@ func (r *Resolver) Browse(ctx context.Context) (<-chan *ServiceInfo, error) {
 
 				// Only send if we found valid IPs
 				if len(info.IPs) > 0 {
-					logger.Sugar.Infof("Discovered service: %s at %v:%d", info.InstanceName, info.IPs, info.Port)
+					logger.Sugar.Infof("[Discovery] discovered service: instance=%s ips=%v port=%d", info.InstanceName, info.IPs, info.Port)
 					results <- info
 				}
 			}

@@ -11,6 +11,8 @@ func init() {
 	gob.Register(RegisterSeeder{})
 	gob.Register(ChunkDataResponse{})
 	gob.Register(Heartbeat{})
+	gob.Register(PeerRegistration{})
+
 }
 
 // Message Types
@@ -38,6 +40,7 @@ type FileRegister struct {
 }
 
 type PeerRegistration struct {
+	ListenAddr string
 }
 
 type FileMetaData struct {

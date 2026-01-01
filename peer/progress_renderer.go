@@ -3,7 +3,6 @@ package peer
 import (
 	"fmt"
 	"strings"
-	"tarun-kavipurapu/p2p-transfer/pkg/logger"
 	"time"
 )
 
@@ -92,7 +91,6 @@ func (pr *ProgressRenderer) Render() {
 
 	// Calculate byte percentage for more accurate progress
 	bytePercent := float64(bytesDownloaded) / float64(fileSize) * 100
-	logger.Sugar.Infof("bytesDownloaded:%d  fileSize: %d  bytePercent:%f", bytesDownloaded, fileSize, bytePercent)
 
 	// Build progress bar - use byte percentage for smoother updates
 	barWidth := pr.width
@@ -165,6 +163,7 @@ func (pr *ProgressRenderer) RenderFinal() {
 	}
 
 	fmt.Print(line)
+
 }
 
 // RenderError renders an error state

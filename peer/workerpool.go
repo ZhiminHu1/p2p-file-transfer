@@ -37,7 +37,7 @@ func (wp *WorkerPool) Start() {
 		go func() {
 			defer wg.Done()
 			for job := range wp.jobs {
-				logger.Sugar.Infof("[PeerServer] Starting job #%d", i)
+				logger.Sugar.Debugf("[WorkerPool] worker=%d starting job", i)
 				result := Result{Job: job, Err: job.Execute()}
 				wp.results <- result
 			}

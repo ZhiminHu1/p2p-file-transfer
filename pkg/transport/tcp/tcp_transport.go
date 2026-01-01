@@ -90,7 +90,7 @@ func (t *TCPTransport) acceptLoop() {
 			case <-t.rpcCh: // just a check, not robust, but standard net error check is better
 				return
 			default:
-				logger.Sugar.Errorf("TCP accept error: %s", err)
+				logger.Sugar.Errorf("[TCPTransport] accept error: listen=%s err=%v", t.listenAddr, err)
 				continue
 			}
 		}
@@ -114,7 +114,7 @@ func (t *TCPTransport) handleConn(conn net.Conn, node transport.Node, outbound b
 		var msg protocol.DataMessage
 		if err := dec.Decode(&msg); err != nil {
 			if err.Error() != "EOF" {
-				logger.Sugar.Errorf("TCP read error from %s: %s", conn.RemoteAddr(), err)
+				logger.Sugar.Errorf("[TCPTransport] read error: remote=%s outbound=%t err=%v", conn.RemoteAddr(), outbound, err)
 			}
 			return
 		}

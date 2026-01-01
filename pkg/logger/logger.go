@@ -2,6 +2,7 @@ package logger
 
 import (
 	"os"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -37,10 +38,19 @@ func init() {
 	// If JSON is preferred for parsing, we could switch to NewJSONEncoder
 	fileEncoder := zapcore.NewConsoleEncoder(encoderConfig)
 
+	level := zapcore.InfoLevel
+	levelStr := strings.TrimSpace(os.Getenv("P2P_LOG_LEVEL"))
+	if levelStr == "" {
+		levelStr = strings.TrimSpace(os.Getenv("LOG_LEVEL"))
+	}
+	if levelStr != "" {
+		_ = level.UnmarshalText([]byte(strings.ToLower(levelStr)))
+	}
+
 	core := zapcore.NewCore(
 		fileEncoder,
 		zapcore.AddSync(file),
-		zap.DebugLevel,
+		level,
 	)
 
 	// AddCaller ensures the log includes filename and line number
