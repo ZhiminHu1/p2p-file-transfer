@@ -1,0 +1,13 @@
+version: "3.8"
+services:
+  server:
+    build: .
+    command: server -a 0.0.0.0:8000
+    ports:
+      - "8000:8000"
+
+  peer:
+    build: .
+    command: peer -a 0.0.0.0:8001 -s server:8000 -i
+    depends_on:
+      - server

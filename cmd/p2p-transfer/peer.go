@@ -167,8 +167,8 @@ func peerCompleter(d prompt.Document) []prompt.Suggest {
 
 func init() {
 	rootCmd.AddCommand(peerCmd)
-	peerCmd.Flags().StringVarP(&peerAddr, "addr", "a", "127.0.0.1:8001", "Address for this peer to listen on")
-	peerCmd.Flags().StringVarP(&serverAddr, "server", "s", "127.0.0.1:8000", "Address of the Central Server")
+	peerCmd.Flags().StringVarP(&peerAddr, "addr", "a", "0.0.0.0:8001", "Address for this peer to listen on")
+	peerCmd.Flags().StringVarP(&serverAddr, "server", "s", "0.0.0.0:8000", "Address of the Central Server")
 	peerCmd.Flags().BoolVar(&autoDiscover, "auto-discover", false, "Automatically discover Central Server")
 	peerCmd.Flags().StringVarP(&fileToRegister, "register", "r", "", "Path to a file to register/seed immediately")
 	peerCmd.Flags().StringVarP(&fileToDownload, "download", "d", "", "File Hash ID to download immediately")
