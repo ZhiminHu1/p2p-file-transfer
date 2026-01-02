@@ -387,6 +387,10 @@ GOOS=windows GOARCH=amd64 go build -o p2p-transfer.exe ./cmd/p2p-transfer
 
 ## 致谢
 
+本项目参考借鉴了 [tarunkavi/p2p-file-transfer](https://github.com/tarunkavi/p2p-file-transfer)。
+
+感谢以下开源项目：
+
 - [github.com/grandcat/zeroconf](https://github.com/grandcat/zeroconf) - mDNS 服务发现库
 - [github.com/spf13/cobra](https://github.com/spf13/cobra) - CLI 框架
 - [github.com/c-bata/go-prompt](https://github.com/c-bata/go-prompt) - 交互式提示库

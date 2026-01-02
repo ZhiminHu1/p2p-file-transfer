@@ -368,6 +368,10 @@ This project is licensed under the MIT License.
 
 ## Acknowledgments
 
+This project is inspired by and based on [tarunkavi/p2p-file-transfer](https://github.com/tarunkavi/p2p-file-transfer).
+
+Special thanks to the following open-source projects:
+
 - [github.com/grandcat/zeroconf](https://github.com/grandcat/zeroconf) - mDNS service discovery library
 - [github.com/spf13/cobra](https://github.com/spf13/cobra) - CLI framework
 - [github.com/c-bata/go-prompt](https://github.com/c-bata/go-prompt) - Interactive prompt library
