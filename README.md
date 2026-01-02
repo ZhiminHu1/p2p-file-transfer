@@ -1,5 +1,7 @@
 # P2P File Transfer
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 A robust peer-to-peer (P2P) file transfer system implemented in Go. This system enables efficient file sharing and chunk-based data transfer between peers, utilizing a central server for peer discovery and mDNS for automatic service discovery.
 
 
