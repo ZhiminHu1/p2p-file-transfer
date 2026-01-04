@@ -119,7 +119,6 @@ func (p *PeerServer) handleChunks(fileMetadata protocol.FileMetadata) error {
 	<-workerPool.Done()
 
 	if successfulChunks != int(numOfChunks) {
-		renderer.RenderError(fmt.Errorf("download incomplete: %d/%d chunks", successfulChunks, numOfChunks))
 		return fmt.Errorf("download incomplete for file %s. Fetched %d/%d chunks. Last error: %v", fileMetadata.FileName, successfulChunks, numOfChunks, lastError)
 	}
 

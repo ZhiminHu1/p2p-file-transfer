@@ -1,23 +1,32 @@
-version: "3.8"
 services:
   server:
     build: .
     command: server -a 0.0.0.0:8000 -i
+    tty: true
+    stdin_open: true
     ports:
       - "8000:8000"
 
   peer1:
     build: .
     command: peer -a 0.0.0.0:8001 -s server:8000 -i
+    tty: true
+    stdin_open: true
     depends_on:
       - server
+
   peer2:
     build: .
     command: peer -a 0.0.0.0:8002 -s server:8000 -i
+    tty: true
+    stdin_open: true
     depends_on:
       - server
+
   peer3:
     build: .
     command: peer -a 0.0.0.0:8003 -s server:8000 -i
+    tty: true
+    stdin_open: true
     depends_on:
       - server

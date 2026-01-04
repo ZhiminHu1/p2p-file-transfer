@@ -3,6 +3,7 @@ package peer
 import (
 	"fmt"
 	"strings"
+	"tarun-kavipurapu/p2p-transfer/pkg/logger"
 	"time"
 )
 
@@ -79,7 +80,18 @@ func (pr *ProgressRenderer) Stop() {
 // StopAndWait stops the renderer and waits for final render
 func (pr *ProgressRenderer) StopAndWait() {
 	close(pr.stopChan)
-	pr.RenderFinal()
+	tracker := pr.tracker
+	if tracker == nil {
+		logger.Sugar.Warn("[PeerServer] No tracker to stop")
+		return
+	}
+	if tracker.completedSize == tracker.FileSize {
+		// 渲染最终下载成功的状态
+		pr.RenderFinal()
+	} else {
+		// 渲染失败的状态
+		pr.RenderError()
+	}
 }
 
 // Render renders the current progress to the terminal
@@ -167,7 +179,7 @@ func (pr *ProgressRenderer) RenderFinal() {
 }
 
 // RenderError renders an error state
-func (pr *ProgressRenderer) RenderError(err error) {
+func (pr *ProgressRenderer) RenderError() {
 	// Clear the previous line completely
 	fmt.Print("\r\033[K")
 
