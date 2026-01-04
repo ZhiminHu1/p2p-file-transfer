@@ -176,8 +176,6 @@ func (p *PeerServer) OnPeer(peer transport.Node) error {
 	p.peerLock.Lock()
 	defer p.peerLock.Unlock()
 
-	// Heuristic to check if it's the central server
-	// NOTE: This might be fragile if address string format differs slightly
 	if peer.Addr() == p.centralServerAddr {
 		p.centralServerPeer = peer
 		logger.Sugar.Infof("[PeerServer] Connected to central server: %s --> %s", peer.Addr(), p.centralServerAddr)

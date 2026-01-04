@@ -237,8 +237,9 @@ func (c *CentralServer) GetPeersList() []string {
 	defer c.mu.Unlock()
 
 	var list []string
-	for addr := range c.peersByListen {
-		list = append(list, addr)
+	for _, peer := range c.peersByListen {
+		// Show both remote address (real) and listen address (claimed)
+		list = append(list, fmt.Sprintf("%s (listen: %s)", peer.RemoteAddr, peer.ListenAddr))
 	}
 	return list
 }

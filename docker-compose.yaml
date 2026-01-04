@@ -9,7 +9,7 @@ services:
 
   peer1:
     build: .
-    command: peer -a 0.0.0.0:8001 -s server:8000 -i
+    command: peer -a peer1:8001 -s server:8000 -i
     tty: true
     stdin_open: true
     depends_on:
@@ -17,7 +17,7 @@ services:
 
   peer2:
     build: .
-    command: peer -a 0.0.0.0:8002 -s server:8000 -i
+    command: peer -a peer2:8002 -s server:8000 -i
     tty: true
     stdin_open: true
     depends_on:
@@ -25,7 +25,7 @@ services:
 
   peer3:
     build: .
-    command: peer -a 0.0.0.0:8003 -s server:8000 -i
+    command: peer -a peer3:8003 -s server:8000 -i
     tty: true
     stdin_open: true
     depends_on:
