@@ -15,7 +15,7 @@ func init() {
 	gob.Register(ChunkDataResponse{})
 	gob.Register(Heartbeat{})
 	gob.Register(PeerRegistration{})
-	gob.Register(StreamMetaWrapper{})
+	gob.Register(DataMessage{})
 }
 
 // Message Types
@@ -39,9 +39,10 @@ type IncomingStream struct {
 	Done   chan struct{}
 }
 
-// StreamMetaWrapper is a wrapper for metadata sent just before a stream
-type StreamMetaWrapper struct {
-	Msg any
+// DataMessage is a wrapper
+type DataMessage struct {
+	Incoming uint8
+	Msg      any
 }
 
 // --- Domain Types ---

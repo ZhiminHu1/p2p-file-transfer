@@ -15,7 +15,6 @@ import (
 // TCPNode implements transport.Node
 type TCPNode struct {
 	conn net.Conn
-	// enc is NOT used directly on conn anymore, but into a buffer
 	lock sync.Mutex
 	// TCP主动连接 outbound -> true 否则 outbound -> false
 	outbound bool
@@ -33,8 +32,13 @@ func (n *TCPNode) Send(msg any) error {
 	defer n.lock.Unlock()
 
 	// 1. Encode payload to memory buffer to know its size
+	dataMessage := protocol.DataMessage{
+		Incoming: protocol.IncomingMessageType,
+		Msg:      msg,
+	}
+
 	var buf bytes.Buffer
-	if err := gob.NewEncoder(&buf).Encode(msg); err != nil {
+	if err := gob.NewEncoder(&buf).Encode(dataMessage); err != nil {
 		return err
 	}
 	payloadBytes := buf.Bytes()
@@ -54,9 +58,10 @@ func (n *TCPNode) SendStream(meta any, data io.Reader, length int64) error {
 	defer n.lock.Unlock()
 
 	// Step 1: Send Metadata Wrapped in StreamMetaWrapper (Control Frame)
-	wrapper := protocol.StreamMetaWrapper{Msg: meta}
+	// 发送一个 控制消息，代表准备进行流式传输数据
+	dataMessage := protocol.DataMessage{Incoming: protocol.IncomingStreamType, Msg: meta}
 	var buf bytes.Buffer
-	if err := gob.NewEncoder(&buf).Encode(wrapper); err != nil {
+	if err := gob.NewEncoder(&buf).Encode(dataMessage); err != nil {
 		return err
 	}
 	metaBytes := buf.Bytes()
@@ -175,24 +180,23 @@ func (t *TCPTransport) handleConn(conn net.Conn, node transport.Node, outbound b
 			}
 
 			// Decode Gob
-			var msg any
+			var dataMessage protocol.DataMessage
 			buf := bytes.NewReader(payload)
-			if err := gob.NewDecoder(buf).Decode(&msg); err != nil {
+			if err := gob.NewDecoder(buf).Decode(&dataMessage); err != nil {
 				logger.Sugar.Errorf("[TCPTransport] gob decode error: %v", err)
 				continue
 			}
 
-			// Check if this is a StreamMetaWrapper
-			if wrapper, ok := msg.(protocol.StreamMetaWrapper); ok {
-				pendingMeta = wrapper.Msg
-				// Do not send to RPC channel yet, wait for the stream
+			if dataMessage.Incoming == protocol.IncomingMessageType {
+				// Standard message
+				t.rpcCh <- protocol.RPC{
+					From:    conn.RemoteAddr().String(),
+					Payload: dataMessage.Msg,
+				}
+			} else if dataMessage.Incoming == protocol.IncomingStreamType {
+				pendingMeta = dataMessage.Msg
 				continue
-			}
-
-			// Standard message
-			t.rpcCh <- protocol.RPC{
-				From:    conn.RemoteAddr().String(),
-				Payload: msg,
+				// 准备读取流式数据
 			}
 
 		} else if msgType == FrameTypeStream {
