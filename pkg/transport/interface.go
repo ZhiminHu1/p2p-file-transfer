@@ -1,10 +1,14 @@
 package transport
 
-import "tarun-kavipurapu/p2p-transfer/pkg/protocol"
+import (
+	"io"
+	"tarun-kavipurapu/p2p-transfer/pkg/protocol"
+)
 
 // Node represents a remote peer that we can send messages to
 type Node interface {
 	Send(msg any) error
+	SendStream(meta any, data io.Reader, length int64) error
 	Close() error
 	Addr() string
 }

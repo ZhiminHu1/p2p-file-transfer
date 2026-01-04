@@ -1,7 +1,10 @@
 package tcp
 
 import (
+	"bytes"
 	"encoding/gob"
+	"fmt"
+	"io"
 	"net"
 	"sync"
 	"tarun-kavipurapu/p2p-transfer/pkg/logger"
@@ -12,7 +15,7 @@ import (
 // TCPNode implements transport.Node
 type TCPNode struct {
 	conn net.Conn
-	enc  *gob.Encoder
+	// enc is NOT used directly on conn anymore, but into a buffer
 	lock sync.Mutex
 	// TCP主动连接 outbound -> true 否则 outbound -> false
 	outbound bool
@@ -21,7 +24,6 @@ type TCPNode struct {
 func NewTCPNode(conn net.Conn, outbound bool) *TCPNode {
 	return &TCPNode{
 		conn:     conn,
-		enc:      gob.NewEncoder(conn),
 		outbound: outbound,
 	}
 }
@@ -30,7 +32,60 @@ func (n *TCPNode) Send(msg any) error {
 	n.lock.Lock()
 	defer n.lock.Unlock()
 
-	return n.enc.Encode(msg)
+	// 1. Encode payload to memory buffer to know its size
+	var buf bytes.Buffer
+	if err := gob.NewEncoder(&buf).Encode(msg); err != nil {
+		return err
+	}
+	payloadBytes := buf.Bytes()
+
+	// 2. Write Header (Control Frame)
+	if err := writeFrameHeader(n.conn, FrameTypeControl, uint32(len(payloadBytes))); err != nil {
+		return err
+	}
+
+	// 3. Write Payload
+	_, err := n.conn.Write(payloadBytes)
+	return err
+}
+
+func (n *TCPNode) SendStream(meta any, data io.Reader, length int64) error {
+	n.lock.Lock()
+	defer n.lock.Unlock()
+
+	// Step 1: Send Metadata Wrapped in StreamMetaWrapper (Control Frame)
+	wrapper := protocol.StreamMetaWrapper{Msg: meta}
+	var buf bytes.Buffer
+	if err := gob.NewEncoder(&buf).Encode(wrapper); err != nil {
+		return err
+	}
+	metaBytes := buf.Bytes()
+
+	if err := writeFrameHeader(n.conn, FrameTypeControl, uint32(len(metaBytes))); err != nil {
+		return fmt.Errorf("failed to write meta header: %w", err)
+	}
+	if _, err := n.conn.Write(metaBytes); err != nil {
+		return fmt.Errorf("failed to write meta payload: %w", err)
+	}
+
+	// Step 2: Send Data Stream (Stream Frame)
+	// Note: We use uint32 for length in header, so max stream size per frame is 4GB.
+	// For larger streams, we might need a 64-bit length header or multiple frames.
+	// Assuming chunk size < 4GB for now.
+	if err := writeFrameHeader(n.conn, FrameTypeStream, uint32(length)); err != nil {
+		return fmt.Errorf("failed to write stream header: %w", err)
+	}
+
+	// Step 3: Copy data directly to connection
+	written, err := io.CopyN(n.conn, data, length)
+	if err != nil {
+		return fmt.Errorf("failed to write stream data: %w", err)
+	}
+	if written != length {
+		return fmt.Errorf("stream write incomplete: expected %d, wrote %d", length, written)
+	}
+
+	return nil
 }
 
 func (n *TCPNode) Close() error {
@@ -98,19 +153,76 @@ func (t *TCPTransport) handleConn(conn net.Conn, node transport.Node, outbound b
 		}
 	}
 
-	dec := gob.NewDecoder(conn)
+	// No global decoder anymore, we decode per frame
+	var pendingMeta any // Store metadata for the next stream
 
 	for {
-		var msg any
-		if err := dec.Decode(&msg); err != nil {
-			if err.Error() != "EOF" {
-				logger.Sugar.Errorf("[TCPTransport] read error: remote=%s outbound=%t err=%v", conn.RemoteAddr(), outbound, err)
+		// 1. Read Header
+		msgType, length, err := readFrameHeader(conn)
+		if err != nil {
+			if err != io.EOF {
+				logger.Sugar.Errorf("[TCPTransport] read header error: remote=%s err=%v", conn.RemoteAddr(), err)
 			}
 			return
 		}
-		t.rpcCh <- protocol.RPC{
-			From:    conn.RemoteAddr().String(),
-			Payload: msg,
+
+		if msgType == FrameTypeControl {
+			// 2a. Control Frame: Read full payload into memory and decode
+			payload := make([]byte, length)
+			if _, err := io.ReadFull(conn, payload); err != nil {
+				logger.Sugar.Errorf("[TCPTransport] read control payload error: %v", err)
+				return
+			}
+
+			// Decode Gob
+			var msg any
+			buf := bytes.NewReader(payload)
+			if err := gob.NewDecoder(buf).Decode(&msg); err != nil {
+				logger.Sugar.Errorf("[TCPTransport] gob decode error: %v", err)
+				continue
+			}
+
+			// Check if this is a StreamMetaWrapper
+			if wrapper, ok := msg.(protocol.StreamMetaWrapper); ok {
+				pendingMeta = wrapper.Msg
+				// Do not send to RPC channel yet, wait for the stream
+				continue
+			}
+
+			// Standard message
+			t.rpcCh <- protocol.RPC{
+				From:    conn.RemoteAddr().String(),
+				Payload: msg,
+			}
+
+		} else if msgType == FrameTypeStream {
+			// 2b. Stream Frame: Pass the reader to upper layer
+			// We MUST block until the stream is consumed.
+			streamReader := io.LimitReader(conn, int64(length))
+			doneCh := make(chan struct{})
+
+			// Use the pending metadata if available
+			var meta any
+			if pendingMeta != nil {
+				meta = pendingMeta
+				pendingMeta = nil // Reset
+			}
+
+			t.rpcCh <- protocol.RPC{
+				From: conn.RemoteAddr().String(),
+				Payload: protocol.IncomingStream{
+					Stream: streamReader,
+					Length: int64(length),
+					Meta:   meta,
+					Done:   doneCh,
+				},
+			}
+
+			// BLOCK here until upper layer finishes reading
+			<-doneCh
+		} else {
+			logger.Sugar.Errorf("[TCPTransport] unknown frame type: %d", msgType)
+			return
 		}
 	}
 }

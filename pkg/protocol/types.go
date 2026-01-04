@@ -1,6 +1,9 @@
 package protocol
 
-import "encoding/gob"
+import (
+	"encoding/gob"
+	"io"
+)
 
 func init() {
 	// Register types for GOB encoding
@@ -12,20 +15,33 @@ func init() {
 	gob.Register(ChunkDataResponse{})
 	gob.Register(Heartbeat{})
 	gob.Register(PeerRegistration{})
+	gob.Register(StreamMetaWrapper{})
 }
 
 // Message Types
 const (
-	// 未来可能会优化大文件传输效率，
-	// TCP的流式传输可以实现零拷贝
-	IncomingStream  = 0x2
-	IncomingMessage = 0x1
+	IncomingStreamType  = 0x2
+	IncomingMessageType = 0x1
 )
 
 // RPC represents a message received from the network
 type RPC struct {
 	From    string
 	Payload any
+}
+
+// IncomingStream is a local wrapper for a network stream.
+// It is NOT sent over the wire, but passed from Transport to Peer.
+type IncomingStream struct {
+	Stream io.Reader
+	Length int64
+	Meta   any // The metadata associated with the stream
+	Done   chan struct{}
+}
+
+// StreamMetaWrapper is a wrapper for metadata sent just before a stream
+type StreamMetaWrapper struct {
+	Msg any
 }
 
 // --- Domain Types ---
@@ -72,7 +88,7 @@ type RegisterSeeder struct {
 type ChunkDataResponse struct {
 	FileId  string
 	ChunkId uint32
-	Data    []byte
+	Data    []byte // 流式数据
 }
 
 type Heartbeat struct {

@@ -2,6 +2,7 @@ package peer
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -90,11 +91,47 @@ func (p *PeerServer) handleMessage(from string, msg protocol.RPC) error {
 	case protocol.ChunkRequestToPeer:
 		logger.Sugar.Infof("[PeerServer] Received ChunkRequestToPeer for file: %s, chunk: %d", v.FileId, v.ChunkId)
 		return p.SendChunkData(from, v)
+	case protocol.IncomingStream:
+		// Handle incoming stream data
+		// We expect the Meta field to contain ChunkDataResponse
+		defer close(v.Done) // Always signal completion
+
+		if v.Meta == nil {
+			io.Copy(io.Discard, v.Stream)
+			return fmt.Errorf("received incoming stream without metadata")
+		}
+
+		if resp, ok := v.Meta.(protocol.ChunkDataResponse); ok {
+			// Process stream using the metadata
+			return p.handleChunkDataStream(resp, v.Stream)
+		} else {
+			io.Copy(io.Discard, v.Stream)
+			return fmt.Errorf("received incoming stream with unknown metadata type: %T", v.Meta)
+		}
+
 	case protocol.ChunkDataResponse:
 		return p.handleChunkDataResponse(v)
 	default:
 		return fmt.Errorf("unknown message type received from %s: %T", from, v)
 	}
+}
+
+func (p *PeerServer) handleChunkDataStream(resp protocol.ChunkDataResponse, stream io.Reader) error {
+	// This replaces handleChunkDataResponse logic for streams
+	// We need to read from stream and save to memory or disk
+	// For now, to match existing logic which expects data in memory (p.pendingChunks),
+	// we will read fully into memory.
+	// OPTIMIZATION TODO: Write directly to disk or pipe to store.
+
+	logger.Sugar.Infof("[PeerServer] Receiving stream for chunk %d of file %s", resp.ChunkId, resp.FileId)
+
+	data, err := io.ReadAll(stream)
+	if err != nil {
+		return fmt.Errorf("failed to read stream data: %w", err)
+	}
+
+	resp.Data = data
+	return p.handleChunkDataResponse(resp)
 }
 
 // 使用 chunksMap优化
@@ -134,16 +171,10 @@ func (p *PeerServer) SendChunkData(from string, v protocol.ChunkRequestToPeer) e
 		return err
 	}
 
-	data := make([]byte, fileInfo.Size())
-	_, err = file.Read(data)
-	if err != nil {
-		return err
-	}
-
 	response := protocol.ChunkDataResponse{
 		FileId:  v.FileId,
 		ChunkId: v.ChunkId,
-		Data:    data,
+		// Data:    nil, // SendStream will send data separately
 	}
 
 	p.peerLock.Lock()
@@ -154,11 +185,11 @@ func (p *PeerServer) SendChunkData(from string, v protocol.ChunkRequestToPeer) e
 		return fmt.Errorf("peer %s not found in map", from)
 	}
 
-	if err := peer.Send(response); err != nil {
-		return fmt.Errorf("failed to send chunk data: %w", err)
+	if err := peer.SendStream(response, file, fileInfo.Size()); err != nil {
+		return fmt.Errorf("failed to send chunk stream: %w", err)
 	}
 
-	logger.Sugar.Infof("[PeerServer] Sent %d bytes of chunk %d to %s", len(data), v.ChunkId, from)
+	logger.Sugar.Infof("[PeerServer] Sent %d bytes of chunk %d to %s", fileInfo.Size(), v.ChunkId, from)
 	return nil
 }
 
