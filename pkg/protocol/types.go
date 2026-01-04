@@ -28,11 +28,6 @@ type RPC struct {
 	Payload any
 }
 
-// DataMessage wraps the payload for transmission
-type DataMessage struct {
-	Payload any
-}
-
 // --- Domain Types ---
 
 type FileRegister struct {

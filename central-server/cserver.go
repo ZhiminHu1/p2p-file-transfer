@@ -113,10 +113,6 @@ func (c *CentralServer) handleMessage(from string, msg protocol.RPC) error {
 	case protocol.RegisterSeeder:
 		return c.registerSeeder(v)
 
-	case protocol.DataMessage:
-		logger.Sugar.Warn("[CentralServer] Received DataMessage wrapper, this shouldn't happen with new transport logic")
-		return nil
-
 	case protocol.Heartbeat:
 		// Heartbeat is frequent; keep it quiet unless debugging.
 		c.mu.Lock()

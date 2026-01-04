@@ -30,17 +30,7 @@ func (n *TCPNode) Send(msg any) error {
 	n.lock.Lock()
 	defer n.lock.Unlock()
 
-	// Wrap in DataMessage as expected by current logic,
-	// or directly send if the receiving side expects the raw struct.
-	// Based on legacy logic: dataMsg := pkg.DataMessage{Payload: msg}
-	// We will send the payload wrapped in DataMessage to maintain compatibility with the message loop logic
-	// effectively, the Transport now handles the wrapping.
-
-	wrapper := protocol.DataMessage{
-		Payload: msg,
-	}
-
-	return n.enc.Encode(wrapper)
+	return n.enc.Encode(msg)
 }
 
 func (n *TCPNode) Close() error {
@@ -111,7 +101,7 @@ func (t *TCPTransport) handleConn(conn net.Conn, node transport.Node, outbound b
 	dec := gob.NewDecoder(conn)
 
 	for {
-		var msg protocol.DataMessage
+		var msg any
 		if err := dec.Decode(&msg); err != nil {
 			if err.Error() != "EOF" {
 				logger.Sugar.Errorf("[TCPTransport] read error: remote=%s outbound=%t err=%v", conn.RemoteAddr(), outbound, err)
@@ -120,7 +110,7 @@ func (t *TCPTransport) handleConn(conn net.Conn, node transport.Node, outbound b
 		}
 		t.rpcCh <- protocol.RPC{
 			From:    conn.RemoteAddr().String(),
-			Payload: msg.Payload,
+			Payload: msg,
 		}
 	}
 }
