@@ -3,13 +3,18 @@ package peer
 import (
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
 
+	_ "net/http/pprof" // Register pprof HTTP handlers
+
 	"tarun-kavipurapu/p2p-transfer/pkg/logger"
+	"tarun-kavipurapu/p2p-transfer/pkg/monitor"
 	"tarun-kavipurapu/p2p-transfer/pkg/protocol"
 	"tarun-kavipurapu/p2p-transfer/pkg/storage"
 	"tarun-kavipurapu/p2p-transfer/pkg/transport"
@@ -18,7 +23,7 @@ import (
 
 // PeerServer manages peer-to-peer file transfers
 type PeerServer struct {
-	peerLock           sync.Mutex
+	peerLock           sync.RWMutex
 	peers              map[string]transport.Node
 	centralServerPeer  transport.Node
 	fileMetadataInfo   map[string]*protocol.FileMetadata
@@ -30,7 +35,7 @@ type PeerServer struct {
 	downloadsMutex     sync.RWMutex
 
 	pendingChunksLock sync.Mutex
-	pendingChunks     map[string]chan protocol.ChunkDataResponse
+	pendingChunks     map[string]chan protocol.ChunkMetaDataResponse
 	quitCh            chan struct{}
 }
 
@@ -42,14 +47,14 @@ func NewPeerServer(addr string, centralServerAddr string) *PeerServer {
 	peerServer := &PeerServer{
 		peers:              make(map[string]transport.Node),
 		peerServerAddr:     addr,
-		peerLock:           sync.Mutex{},
+		peerLock:           sync.RWMutex{},
 		Transport:          trans,
 		centralServerAddr:  centralServerAddr,
 		store:              storage.Store{},
 		fileMetadataInfo:   make(map[string]*protocol.FileMetadata),
 		completedDownloads: make(map[string]bool),
 		downloadsMutex:     sync.RWMutex{},
-		pendingChunks:      make(map[string]chan protocol.ChunkDataResponse),
+		pendingChunks:      make(map[string]chan protocol.ChunkMetaDataResponse),
 		quitCh:             make(chan struct{}),
 	}
 	trans.SetOnPeer(peerServer.OnPeer)
@@ -93,50 +98,61 @@ func (p *PeerServer) handleMessage(from string, msg protocol.RPC) error {
 		return p.SendChunkData(from, v)
 	case protocol.IncomingStream:
 		// Handle incoming stream data
-		// We expect the Meta field to contain ChunkDataResponse
 		defer close(v.Done) // Always signal completion
 
 		if v.Meta == nil {
 			io.Copy(io.Discard, v.Stream)
+			logger.Sugar.Errorf("[PeerServer] Received incoming stream with no metadata")
 			return fmt.Errorf("received incoming stream without metadata")
 		}
 
-		if resp, ok := v.Meta.(protocol.ChunkDataResponse); ok {
-			// Process stream using the metadata
-			return p.handleChunkDataStream(resp, v.Stream)
+		if meta, ok := v.Meta.(protocol.ChunkMetaDataResponse); ok {
+			return p.handleChunkDataStream(meta, v.Stream)
 		} else {
 			io.Copy(io.Discard, v.Stream)
+			logger.Sugar.Errorf("[PeerServer] Received incoming stream with unknown metadata type: %T", v.Meta)
 			return fmt.Errorf("received incoming stream with unknown metadata type: %T", v.Meta)
 		}
-
-	case protocol.ChunkDataResponse:
-		return p.handleChunkDataResponse(v)
 	default:
 		return fmt.Errorf("unknown message type received from %s: %T", from, v)
 	}
 }
 
-func (p *PeerServer) handleChunkDataStream(resp protocol.ChunkDataResponse, stream io.Reader) error {
-	// This replaces handleChunkDataResponse logic for streams
-	// We need to read from stream and save to memory or disk
-	// For now, to match existing logic which expects data in memory (p.pendingChunks),
-	// we will read fully into memory.
-	// OPTIMIZATION TODO: Write directly to disk or pipe to store.
+func (p *PeerServer) handleChunkDataStream(meta protocol.ChunkMetaDataResponse, stream io.Reader) error {
+	logger.Sugar.Infof("[PeerServer] Receiving stream for chunk %d of file %s", meta.ChunkId, meta.FileId)
 
-	logger.Sugar.Infof("[PeerServer] Receiving stream for chunk %d of file %s", resp.ChunkId, resp.FileId)
+	// Start transfer timing
+	monitor.StartTransfer()
 
-	data, err := io.ReadAll(stream)
-	if err != nil {
-		return fmt.Errorf("failed to read stream data: %w", err)
+	// 创建 chunk 目录并写入文件
+	baseDir := fmt.Sprintf("chunks-%s", strings.Split(p.peerServerAddr, ":")[0])
+	chunkDir := filepath.Join(baseDir, meta.FileId)
+	if err := os.MkdirAll(chunkDir, 0755); err != nil {
+		return fmt.Errorf("failed to create chunk directory: %w", err)
 	}
 
-	resp.Data = data
-	return p.handleChunkDataResponse(resp)
-}
+	chunkPath := filepath.Join(chunkDir, fmt.Sprintf("chunk_%d.chunk", meta.ChunkId))
+	file, err := os.Create(chunkPath)
+	if err != nil {
+		return fmt.Errorf("failed to create chunk file: %w", err)
+	}
+	defer file.Close()
 
-// 使用 chunksMap优化
-func (p *PeerServer) handleChunkDataResponse(resp protocol.ChunkDataResponse) error {
-	key := fmt.Sprintf("%s:%d", resp.FileId, resp.ChunkId)
+	// 流式写入（在这里完整消费 stream）
+	written, err := io.Copy(file, stream)
+	if err != nil {
+		file.Close()         // 先关闭文件（Windows 需要先关闭才能删除）
+		os.Remove(chunkPath) // 清理残留文件
+		return fmt.Errorf("failed to write chunk: %w", err)
+	}
+
+	// 记录传输完成
+	monitor.RecordTransfer(written)
+
+	logger.Sugar.Debugf("[PeerServer] Saved chunk %d (%d bytes)", meta.ChunkId, written)
+
+	// 通知 logic 层：chunk 已保存
+	key := fmt.Sprintf("%s:%d", meta.FileId, meta.ChunkId)
 	p.pendingChunksLock.Lock()
 	ch, exists := p.pendingChunks[key]
 	if exists {
@@ -145,7 +161,7 @@ func (p *PeerServer) handleChunkDataResponse(resp protocol.ChunkDataResponse) er
 	p.pendingChunksLock.Unlock()
 
 	if exists {
-		ch <- resp
+		ch <- meta
 	} else {
 		logger.Sugar.Warnf("[PeerServer] Warning: Received chunk data for %s but no pending request found.", key)
 	}
@@ -155,7 +171,7 @@ func (p *PeerServer) handleChunkDataResponse(resp protocol.ChunkDataResponse) er
 func (p *PeerServer) SendChunkData(from string, v protocol.ChunkRequestToPeer) error {
 	// Logic to read file and send data
 	// Use relative path matching how chunks are created
-	baseDir := fmt.Sprintf("chunks-%s", strings.Split(p.peerServerAddr, ":")[0])
+	baseDir := fmt.Sprintf("chunks-%s", strings.ReplaceAll(p.peerServerAddr, ":", "-"))
 	filePath := filepath.Join(baseDir, v.FileId, v.ChunkName)
 	logger.Sugar.Infof("[PeerServer] Sending chunk %d of file %s to %s from path %s", v.ChunkId, v.FileId, from, filePath)
 
@@ -171,10 +187,9 @@ func (p *PeerServer) SendChunkData(from string, v protocol.ChunkRequestToPeer) e
 		return err
 	}
 
-	response := protocol.ChunkDataResponse{
+	meta := protocol.ChunkMetaDataResponse{
 		FileId:  v.FileId,
 		ChunkId: v.ChunkId,
-		// Data:    nil, // SendStream will send data separately
 	}
 
 	p.peerLock.Lock()
@@ -185,7 +200,7 @@ func (p *PeerServer) SendChunkData(from string, v protocol.ChunkRequestToPeer) e
 		return fmt.Errorf("peer %s not found in map", from)
 	}
 
-	if err := peer.SendStream(response, file, fileInfo.Size()); err != nil {
+	if err := peer.SendStream(meta, file, fileInfo.Size()); err != nil {
 		return fmt.Errorf("failed to send chunk stream: %w", err)
 	}
 
@@ -201,6 +216,34 @@ func (p *PeerServer) handleRequestChunks(from string, msg protocol.FileMetadata)
 		return err
 	}
 	return nil
+}
+
+func (p *PeerServer) GetOrDialPeer(addr string) (transport.Node, error) {
+	// Fast path: read lock check
+	p.peerLock.RLock()
+	if node, exists := p.peers[addr]; exists {
+		p.peerLock.RUnlock()
+		return node, nil
+	}
+	p.peerLock.RUnlock()
+
+	// Slow path: write lock with double check
+	p.peerLock.Lock()
+	defer p.peerLock.Unlock()
+
+	// Double check after acquiring write lock
+	if node, exists := p.peers[addr]; exists {
+		return node, nil
+	}
+
+	node, err := p.Transport.Dial(addr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to dial peer %s: %w", addr, err)
+	}
+
+	p.peers[addr] = node
+	logger.Sugar.Debugf("[PeerServer] Dialed and cached peer: %s", addr)
+	return node, nil
 }
 
 func (p *PeerServer) OnPeer(peer transport.Node) error {
@@ -286,7 +329,7 @@ func (p *PeerServer) RegisterFile(path string) error {
 		return fmt.Errorf("failed to hash file: %w", err)
 	}
 
-	validDir := fmt.Sprintf("chunks-%s", strings.Split(p.peerServerAddr, ":")[0])
+	validDir := fmt.Sprintf("chunks-%s", strings.ReplaceAll(p.peerServerAddr, ":", "-"))
 	fileDirectory, err := p.store.CreateChunkDirectory(validDir, hashString)
 	if err != nil {
 		return fmt.Errorf("failed to create chunk directory: %w", err)
@@ -340,7 +383,7 @@ func (p *PeerServer) registerAsSeeder(fileId string) error {
 		PeerAddr: p.peerServerAddr,
 	}
 
-	// TCP连接并发数据写入不是安全的
+	//
 	p.peerLock.Lock()
 	centralServer := p.centralServerPeer
 	p.peerLock.Unlock()
@@ -387,10 +430,25 @@ func (p *PeerServer) RequestChunkData(fileId string) error {
 func (p *PeerServer) Start() error {
 	logger.Sugar.Infof("[PeerServer] Starting peer server on address: %s", p.Transport.Addr())
 
+	// Enable profiling for mutex and block contention
+	runtime.SetMutexProfileFraction(1) // Record all mutex contentions
+	runtime.SetBlockProfileRate(1)     // Record all blocking operations
+
 	err := p.Transport.ListenAndAccept()
 	if err != nil {
 		return fmt.Errorf("failed to start listening: %w", err)
 	}
+
+	// Start pprof HTTP server (non-blocking, localhost only)
+	go func() {
+		logger.Sugar.Infof("[pprof] listening on http://localhost:6060/debug/pprof/")
+		if err := http.ListenAndServe("localhost:6060", nil); err != nil {
+			logger.Sugar.Errorf("[pprof] server error: %v", err)
+		}
+	}()
+
+	// Start periodic metrics logging
+	go monitor.LogPeriodic(30 * time.Second)
 
 	err = p.RegisterPeer()
 	if err != nil {
@@ -408,9 +466,9 @@ func (p *PeerServer) GetStatus() string {
 	status := fmt.Sprintf("Peer Server Running on: %s\n", p.peerServerAddr)
 	status += fmt.Sprintf("Central Server: %s ", p.centralServerAddr)
 	if p.centralServerPeer != nil {
-		status += "  (Connected)\n"
+		status += "(Connected)\n"
 	} else {
-		status += "  (Disconnected)\n"
+		status += "(Disconnected)\n"
 	}
 	status += fmt.Sprintf("Connected Peers: %d\n", len(p.peers))
 

@@ -1,7 +1,6 @@
 package peer
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -37,6 +36,25 @@ func (p *PeerServer) handleChunks(fileMetadata protocol.FileMetadata) error {
 	numOfChunks := uint32(len(fileMetadata.ChunkInfo))
 	chunkPeerAssign := assignChunks(fileMetadata)
 
+	// 关注点分离，提前建立连接
+	logger.Sugar.Infof("[PeerServer] Pre-connecting to required peers...")
+	uniquePeers := make(map[string]struct{})
+	for _, peerAddr := range chunkPeerAssign {
+		uniquePeers[peerAddr] = struct{}{}
+	}
+
+	var wgDial sync.WaitGroup
+	for peerAddr := range uniquePeers {
+		wgDial.Add(1)
+		go func(addr string) {
+			defer wgDial.Done()
+			if _, err := p.GetOrDialPeer(addr); err != nil {
+				logger.Sugar.Warnf("[PeerServer] Failed to pre-connect to %s: %v", addr, err)
+			}
+		}(peerAddr)
+	}
+	wgDial.Wait()
+
 	// Create progress tracker
 	downloadTracker := NewDownloadTracker(
 		fileMetadata.FileId,
@@ -68,7 +86,7 @@ func (p *PeerServer) handleChunks(fileMetadata protocol.FileMetadata) error {
 
 	logger.Sugar.Infof("[PeerServer] Starting download of file %s (%s) with %d chunks", fileMetadata.FileName, fileMetadata.FileId, numOfChunks)
 
-	const maxWorkers = 5
+	const maxWorkers = 12
 	workerPool := NewWorkerPool(maxWorkers)
 	workerPool.Start()
 
@@ -154,7 +172,7 @@ func (p *PeerServer) fileRequest(fileId string, chunkIndex uint32, peerAddr stri
 
 	// 1. Setup response channel
 	key := fmt.Sprintf("%s:%d", fileId, chunkIndex)
-	respCh := make(chan protocol.ChunkDataResponse, 1)
+	respCh := make(chan protocol.ChunkMetaDataResponse, 1)
 
 	p.pendingChunksLock.Lock()
 	p.pendingChunks[key] = respCh
@@ -170,26 +188,14 @@ func (p *PeerServer) fileRequest(fileId string, chunkIndex uint32, peerAddr stri
 	p.peerLock.Lock()
 	node, exists := p.peers[peerAddr]
 	p.peerLock.Unlock()
-
 	if !exists {
-		logger.Sugar.Debugf("[PeerServer] dialing peer (no cached connection): %s", peerAddr)
-		// Connect connection
-		newNode, err := p.Transport.Dial(peerAddr)
+		// Fallback: try to dial once more
+		logger.Sugar.Warnf("[PeerServer] peer %s not in cache, attempting to dial", peerAddr)
+		newNode, err := p.GetOrDialPeer(peerAddr)
 		if err != nil {
-			return fmt.Errorf("failed to dial peer %s: %w", peerAddr, err)
+			return fmt.Errorf("peer %s not available: %w", peerAddr, err)
 		}
-
-		p.peerLock.Lock()
-		// Double check if connection was established while we were dialing
-		// 保证对同一个peer 只会有一条TCP连接
-		if existingNode, ok := p.peers[peerAddr]; ok {
-			newNode.Close()
-			node = existingNode
-		} else {
-			p.peers[peerAddr] = newNode
-			node = newNode
-		}
-		p.peerLock.Unlock()
+		node = newNode
 	}
 
 	// 3. Send Request
@@ -204,50 +210,42 @@ func (p *PeerServer) fileRequest(fileId string, chunkIndex uint32, peerAddr stri
 		return fmt.Errorf("failed to send chunk request: %w", err)
 	}
 
-	// 4. Wait for response
+	// 4. Wait for response (peer 层已经完成存储)
 	select {
-
-	case resp := <-respCh:
-		// Process response
-		return p.saveChunk(fileId, chunkIndex, resp.Data, chunkHash, downloadTracker)
+	case meta := <-respCh:
+		// 验证 hash 并更新进度
+		return p.verifyChunkHash(meta.FileId, meta.ChunkId, chunkHash, downloadTracker)
 	case <-time.After(30 * time.Second):
 		return fmt.Errorf("timeout waiting for chunk %d", chunkIndex)
 	}
 }
 
-func (p *PeerServer) saveChunk(fileId string, chunkIndex uint32, data []byte, expectedHash string, downloadTracker *DownloadTracker) error {
-	// Verify Hash in memory before writing to disk
-	dataReader := bytes.NewReader(data)
-	calculatedHash, err := storage.HashChunk(dataReader)
-	if err != nil {
-		return fmt.Errorf("failed to calculate hash from memory: %w", err)
-	}
-
-	if calculatedHash != expectedHash {
-		return fmt.Errorf("chunk hash verification failed (memory). Expected: %s, Got: %s", expectedHash, calculatedHash)
-	}
-
+func (p *PeerServer) verifyChunkHash(fileId string, chunkIndex uint32, expectedHash string, downloadTracker *DownloadTracker) error {
 	baseDir := fmt.Sprintf("chunks-%s", strings.Split(p.peerServerAddr, ":")[0])
-	folderDirectory, err := p.store.CreateChunkDirectory(baseDir, fileId)
+	folderDirectory := filepath.Join(baseDir, fileId)
+	chunkPath := filepath.Join(folderDirectory, fmt.Sprintf("chunk_%d.chunk", chunkIndex))
+
+	// 打开已保存的文件验证 hash
+	file, err := os.Open(chunkPath)
 	if err != nil {
-		return fmt.Errorf("failed to create chunk directory: %w", err)
+		return fmt.Errorf("failed to open chunk for hash verification: %w", err)
+	}
+	defer file.Close()
+
+	if err := storage.CheckFileHash(file, expectedHash); err != nil {
+		os.Remove(chunkPath)
+		return fmt.Errorf("hash verification failed for chunk %d: %w", chunkIndex, err)
 	}
 
-	chunkName := fmt.Sprintf("chunk_%d.chunk", chunkIndex)
-	filePath := filepath.Join(folderDirectory, chunkName)
-
-	writeFile, err := os.Create(filePath)
+	// 获取文件大小用于更新进度
+	fileInfo, err := file.Stat()
 	if err != nil {
-		return fmt.Errorf("failed to create file %s: %w", filePath, err)
+		return fmt.Errorf("failed to stat chunk file: %w", err)
 	}
-	defer writeFile.Close()
 
-	if _, err := writeFile.Write(data); err != nil {
-		return err
-	}
 	// update tracker mark as chunk completed
 	if downloadTracker != nil {
-		downloadTracker.UpdateChunkProgress(chunkIndex, uint64(len(data)))
+		downloadTracker.UpdateChunkProgress(chunkIndex, uint64(fileInfo.Size()))
 	}
 
 	return nil

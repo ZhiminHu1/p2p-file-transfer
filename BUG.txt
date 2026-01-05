@@ -4,5 +4,6 @@
 4. peer异常TCP连接数量
 5. TCP流式传输优化大文件传输效率，实现0拷贝
 6. 响应数据peer的故障处理与高可用(涉及到，centralServer、peerServer、负载均衡算法)
+7. peer之间的活跃维护
 
 

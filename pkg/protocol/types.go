@@ -12,7 +12,7 @@ func init() {
 	gob.Register(RequestChunkData{})
 	gob.Register(ChunkRequestToPeer{})
 	gob.Register(RegisterSeeder{})
-	gob.Register(ChunkDataResponse{})
+	gob.Register(ChunkMetaDataResponse{})
 	gob.Register(Heartbeat{})
 	gob.Register(PeerRegistration{})
 	gob.Register(DataMessage{})
@@ -86,10 +86,10 @@ type RegisterSeeder struct {
 	PeerAddr string
 }
 
-type ChunkDataResponse struct {
+// ChunkMetaDataResponse 流式传输前的meta数据
+type ChunkMetaDataResponse struct {
 	FileId  string
 	ChunkId uint32
-	Data    []byte // 流式数据
 }
 
 type Heartbeat struct {

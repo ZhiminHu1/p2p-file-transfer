@@ -8,6 +8,9 @@ services:
       - "8000:8000"
 
   peer1:
+    ports:
+      - "8001:8001"
+      - "6060:6060"
     build: .
     command: peer -a peer1:8001 -s server:8000 -i
     tty: true

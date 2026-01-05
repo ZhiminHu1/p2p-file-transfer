@@ -58,7 +58,6 @@ func (n *TCPNode) SendStream(meta any, data io.Reader, length int64) error {
 	defer n.lock.Unlock()
 
 	// Step 1: Send Metadata Wrapped in StreamMetaWrapper (Control Frame)
-	// 发送一个 控制消息，代表准备进行流式传输数据
 	dataMessage := protocol.DataMessage{Incoming: protocol.IncomingStreamType, Msg: meta}
 	var buf bytes.Buffer
 	if err := gob.NewEncoder(&buf).Encode(dataMessage); err != nil {
@@ -66,6 +65,7 @@ func (n *TCPNode) SendStream(meta any, data io.Reader, length int64) error {
 	}
 	metaBytes := buf.Bytes()
 
+	// 发送一个 控制消息，代表准备进行流式传输数据
 	if err := writeFrameHeader(n.conn, FrameTypeControl, uint32(len(metaBytes))); err != nil {
 		return fmt.Errorf("failed to write meta header: %w", err)
 	}
@@ -74,9 +74,6 @@ func (n *TCPNode) SendStream(meta any, data io.Reader, length int64) error {
 	}
 
 	// Step 2: Send Data Stream (Stream Frame)
-	// Note: We use uint32 for length in header, so max stream size per frame is 4GB.
-	// For larger streams, we might need a 64-bit length header or multiple frames.
-	// Assuming chunk size < 4GB for now.
 	if err := writeFrameHeader(n.conn, FrameTypeStream, uint32(length)); err != nil {
 		return fmt.Errorf("failed to write stream header: %w", err)
 	}
