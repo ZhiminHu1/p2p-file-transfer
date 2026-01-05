@@ -220,7 +220,7 @@ func (p *PeerServer) fileRequest(fileId string, chunkIndex uint32, peerAddr stri
 }
 
 func (p *PeerServer) verifyChunkHash(fileId string, chunkIndex uint32, expectedHash string, downloadTracker *DownloadTracker) error {
-	baseDir := fmt.Sprintf("chunks-%s", strings.Split(p.peerServerAddr, ":")[0])
+	baseDir := fmt.Sprintf("chunks-%s", strings.ReplaceAll(p.peerServerAddr, ":", "-"))
 	folderDirectory := filepath.Join(baseDir, fileId)
 	chunkPath := filepath.Join(folderDirectory, fmt.Sprintf("chunk_%d.chunk", chunkIndex))
 

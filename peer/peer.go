@@ -125,7 +125,7 @@ func (p *PeerServer) handleChunkDataStream(meta protocol.ChunkMetaDataResponse, 
 	monitor.StartTransfer()
 
 	// 创建 chunk 目录并写入文件
-	baseDir := fmt.Sprintf("chunks-%s", strings.Split(p.peerServerAddr, ":")[0])
+	baseDir := fmt.Sprintf("chunks-%s", strings.ReplaceAll(p.peerServerAddr, ":", "-"))
 	chunkDir := filepath.Join(baseDir, meta.FileId)
 	if err := os.MkdirAll(chunkDir, 0755); err != nil {
 		return fmt.Errorf("failed to create chunk directory: %w", err)
