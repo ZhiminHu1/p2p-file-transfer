@@ -174,20 +174,6 @@ func (c *CentralServer) handleRequestChunkData(from string, msg protocol.Request
 	}
 	node := peerByRemote.Node
 
-	//logger.Sugar.Info(msg)
-	// 检查chunks的活跃owner
-	// todo BGU待修复
-	for chunkId, chunkInfo := range fileMetadata.ChunkInfo {
-		var activeOwners []string
-		for _, ownerAddr := range chunkInfo.Owners {
-			// 检查owner是否在活跃列表中
-			if _, exist := c.peersByListen[ownerAddr]; exist {
-				activeOwners = append(activeOwners, ownerAddr)
-			}
-		}
-		chunkInfo.Owners = activeOwners
-		fileMetadata.ChunkInfo[chunkId] = chunkInfo
-	}
 	c.mu.Unlock()
 
 	// Send protocol object

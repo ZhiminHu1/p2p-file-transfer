@@ -13,12 +13,6 @@ import (
 	"tarun-kavipurapu/p2p-transfer/pkg/storage"
 )
 
-type ChunkStatus struct {
-	Index      uint32
-	isFetched  bool
-	isFetching bool
-}
-
 type ChunkJob struct {
 	FileId          string
 	ChunkIndex      uint32
@@ -169,7 +163,6 @@ func (p *PeerServer) handleChunks(fileMetadata protocol.FileMetadata) error {
 // use async request to opt speed of downloading fileMetadata
 func (p *PeerServer) fileRequest(fileId string, chunkIndex uint32, peerAddr string, chunkHash string, downloadTracker *DownloadTracker) error {
 	// Async Request with Transport
-
 	// 1. Setup response channel
 	key := fmt.Sprintf("%s:%d", fileId, chunkIndex)
 	respCh := make(chan protocol.ChunkMetaDataResponse, 1)
@@ -183,6 +176,12 @@ func (p *PeerServer) fileRequest(fileId string, chunkIndex uint32, peerAddr stri
 		delete(p.pendingChunks, key)
 		p.pendingChunksLock.Unlock()
 	}()
+
+	// 如果 peerAddr 是自己，直接验证本地 chunk
+	if peerAddr == p.peerServerAddr {
+		logger.Sugar.Infof("[PeerServer] Chunk %d owner is self, validating local chunk", chunkIndex)
+		return p.verifyChunkHash(fileId, chunkIndex, chunkHash, downloadTracker)
+	}
 
 	// 2. Connect/Reuse connection
 	p.peerLock.Lock()
@@ -251,7 +250,6 @@ func (p *PeerServer) verifyChunkHash(fileId string, chunkIndex uint32, expectedH
 	return nil
 }
 
-// todo 负载均衡算法具有脆弱性
 func assignChunks(fileMetadata protocol.FileMetadata) map[uint32]string {
 	chunkPeerAssign := make(map[uint32]string) //chunkIndex->peer
 	peerLoad := make(map[string]uint32)        //peerId ->number of chunks
